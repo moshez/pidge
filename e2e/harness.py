@@ -49,6 +49,7 @@ OWNER = "owner@example.net"
 FUNCTION_HOST = "abc123.lambda-url.us-west-2.on.aws"
 RESOURCE = f"https://{FUNCTION_HOST}/mcp"
 SCOPE = f"{RESOURCE}/full"
+KILL_SWITCH_TOPIC = "arn:aws:sns:us-west-2:123456789012:budget-killswitch"
 MOTO_IMAGE = os.environ.get("MOTO_IMAGE", "motoserver/moto:5.2.5")
 CONTAINER_HOST = "host.docker.internal"
 ASYNC_ATTEMPTS = 3  # Lambda's default: the first try plus two retries
@@ -121,6 +122,7 @@ class Emulator:
         self.faults: list[Fault] = []
         self.queue: list[Mapping[str, object]] = []
         self.sends: list[SesSend] = []
+        self.concurrency: dict[str, int] = {}
         self.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         self.server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), self.handler())
         self.port = int(self.server.server_address[1])
@@ -135,6 +137,7 @@ class Emulator:
             self.faults.clear()
             self.queue.clear()
             self.sends.clear()
+            self.concurrency.clear()
 
     def fault(self, method: str, pattern: str, times: int, **kwargs: object) -> Fault:
         fault = Fault(method, pattern, times, **kwargs)  # type: ignore[arg-type]
@@ -205,6 +208,13 @@ class Emulator:
     ) -> tuple[int, Mapping[str, str], bytes]:
         if path == "/issuer/.well-known/jwks.json":
             return 200, {"Content-Type": "application/json"}, self.jwks()
+        concurrency = re.match(r"^/2017-10-31/functions/([^/]+)/concurrency", path)
+        if concurrency and method == "PUT":
+            limit = int(json.loads(body)["ReservedConcurrentExecutions"])
+            with self.lock:
+                self.concurrency[urllib.parse.unquote(concurrency.group(1))] = limit
+            reply = {"ReservedConcurrentExecutions": limit}
+            return 200, {"Content-Type": "application/json"}, json.dumps(reply).encode()
         invoke = re.match(r"^/2015-03-31/functions/([^/]+)/invocations", path)
         if invoke:
             with self.lock:
@@ -374,6 +384,9 @@ class Stack:
         ses = self.client("sesv2", direct=True)
         ses.create_email_identity(EmailIdentity=DOMAIN)
         ses.create_configuration_set(ConfigurationSetName="pidge")
+        receiving = self.client("ses", direct=True)
+        receiving.create_receipt_rule_set(RuleSetName="pidge")
+        receiving.set_active_receipt_rule_set(RuleSetName="pidge")
         self.start_function()
 
     def start_function(self) -> None:
@@ -393,6 +406,7 @@ class Stack:
             CONFIGURATION_SET="pidge",
             MESSAGE_ID_DOMAIN="us-west-2.amazonses.com",
             ISSUER=self.emulator.issuer,
+            KILL_SWITCH_TOPIC_ARN=KILL_SWITCH_TOPIC,
             LD_PRELOAD="/e2e/libfaketime.so.1",
             FAKETIME_TIMESTAMP_FILE="/e2e/faketime/now",
             FAKETIME_NO_CACHE="1",
@@ -497,6 +511,9 @@ class Stack:
     # -- Lambda ----------------------------------------------------------------
 
     def invoke_once(self, event: Mapping[str, object]) -> Invocation:
+        if self.emulator.concurrency.get("pidge") == 0:
+            # What Lambda does with reserved concurrency 0: throttle everything.
+            return Invocation(None, "TooManyRequestsException: Rate Exceeded.")
         request = urllib.request.Request(
             f"http://127.0.0.1:{self.function_port}/2015-03-31/functions/function/invocations",
             data=json.dumps(event).encode(),
@@ -565,6 +582,22 @@ class Stack:
         result = self.invoke_async({"action": "index"})
         self.settle()
         return result
+
+    def notify(self, topic: str, message: str) -> Invocation:
+        """Deliver an SNS notification (SNS invokes Lambda asynchronously)."""
+        record = {
+            "EventSource": "aws:sns",
+            "EventVersion": "1.0",
+            "EventSubscriptionArn": f"{topic}:{uuid.uuid4()}",
+            "Sns": {
+                "Type": "Notification",
+                "MessageId": str(uuid.uuid4()),
+                "TopicArn": topic,
+                "Subject": "AWS Budgets: pidge-monthly has exceeded your alert threshold",
+                "Message": message,
+            },
+        }
+        return self.invoke_async({"Records": [record]})
 
     def publish(self, kind: str, send: SesSend, **detail: object) -> Invocation:
         """Publish an SES event through EventBridge."""

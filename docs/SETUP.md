@@ -4,14 +4,15 @@ One script does the whole setup:
 
 ```sh
 pip install boto3
-python3 infra/setup.py --email you@example.net
+python3 infra/setup.py --email you@example.net --budget-email you@example.net
 ```
 
 Run it from the repository root on a machine signed in to AWS (administrator
 credentials for the account), with the GitHub CLI signed in (`gh auth
 status`) and OpenTofu 1.10 or later installed. Your address is passed on the
 command line and stored as a GitHub variable, so it never lands in this
-public repository.
+public repository. `--budget-email` is where cost alerts go; it must be
+outside the mail domain, so alerts never land in the mailbox they are about.
 
 Every step checks what already exists before doing anything, so if the
 script stops (a failed deploy, a closed laptop), fix what it reports and run
@@ -28,7 +29,8 @@ the same command again.
    provider, the deploy role (trusting only `trunk` of this repository, by
    immutable IDs it looks up), and the ECR repository.
 4. Sets the repository variables `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`,
-   `MAIL_DOMAIN`, `OWNER_EMAIL`, `COGNITO_DOMAIN_PREFIX`.
+   `MAIL_DOMAIN`, `OWNER_EMAIL`, `COGNITO_DOMAIN_PREFIX`,
+   `BUDGET_ALERT_EMAIL`, `BUDGET_LIMIT_USD`.
 5. Offers to merge the pull request (or waits while you merge it), then
    follows the deploy run to the end.
 6. Waits for you to click the SES verification link sent to your address.
@@ -68,6 +70,8 @@ registers; only the last step has anything left to do.
 | Option | Default |
 |---|---|
 | `--email` | (required) your own address, the mailbox owner |
+| `--budget-email` | (required) where cost alerts go, outside the mail domain |
+| `--budget-limit` | `5` (USD a month; expected spend is about $0.30) |
 | `--domain` | `ncolony.org` (its DNS must be on Cloudflare) |
 | `--region` | `us-west-2` |
 | `--repo` | `moshez/pidge` |
@@ -83,6 +87,13 @@ registers; only the last step has anything left to do.
   Run the script again with another `--cognito-prefix`.
 - **The first deploy times out waiting for SES domain verification** (capped
   at 60 minutes): run the script again; it re-runs the deploy.
+
+## Cost guardrail
+
+A $5 monthly budget emails you at 50% (actual) and 100% (forecast). At 100%
+actual, a kill switch turns off SES receiving and stops the function. At 200%,
+a budget action attaches a deny-all policy to the function's role and the
+deploy role. [RECOVERY.md](../RECOVERY.md) undoes each step.
 
 ## Where problems show up
 

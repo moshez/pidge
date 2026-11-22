@@ -30,6 +30,7 @@ from .harness import (
     DOMAIN,
     FROM_ADDRESS,
     FUNCTION_HOST,
+    KILL_SWITCH_TOPIC,
     SCOPE,
     Stack,
     ToolFailed,
@@ -489,6 +490,55 @@ class TestReplay(EndToEnd):
         read = self.stack.tool("get_message", id=note["id"])
         assert isinstance(read, dict)
         assert_that(read["body"], contains_string("failed-events/"))
+
+
+class TestKillSwitch(EndToEnd):
+    """The budget kill switch stops receiving and stops the function."""
+
+    def test_trip(self) -> None:
+        """Receiving is deactivated and concurrency set to 0; then nothing runs."""
+        ses = self.stack.client("ses", direct=True)
+        assert_that(
+            ses.describe_active_receipt_rule_set().get("Metadata"), is_not(None)
+        )
+        result = self.stack.notify(KILL_SWITCH_TOPIC, "Budget exceeded")
+        assert_that(result.ok, equal_to(True))
+        assert_that(
+            result.payload,
+            equal_to({"receipt_rule_set": "deactivated", "reserved_concurrency": 0}),
+        )
+        assert_that(
+            ses.describe_active_receipt_rule_set().get("Metadata"), equal_to(None)
+        )
+        assert_that(self.stack.emulator.concurrency, equal_to({"pidge": 0}))
+        logs = self.stack.logs()
+        assert_that(logs, contains_string("SES receipt rule set deactivated"))
+        assert_that(logs, contains_string("reserved concurrency set to 0"))
+        with self.assertRaisesRegex(AssertionError, "TooManyRequests"):
+            self.stack.rpc("tools/list")
+
+    def test_idempotent(self) -> None:
+        """Tripping twice (SNS can deliver twice) leaves the same end state."""
+        for _ in range(2):
+            self.stack.emulator.concurrency.clear()  # let the second delivery run
+            assert_that(
+                self.stack.notify(KILL_SWITCH_TOPIC, "again").ok, equal_to(True)
+            )
+        ses = self.stack.client("ses", direct=True)
+        assert_that(
+            ses.describe_active_receipt_rule_set().get("Metadata"), equal_to(None)
+        )
+        assert_that(self.stack.emulator.concurrency, equal_to({"pidge": 0}))
+
+    def test_other_topics_are_ignored(self) -> None:
+        """An SNS record from another topic does not trip the switch."""
+        other = KILL_SWITCH_TOPIC.replace("budget-killswitch", "something-else")
+        assert_that(self.stack.notify(other, "hello").ok, equal_to(False))
+        ses = self.stack.client("ses", direct=True)
+        assert_that(
+            ses.describe_active_receipt_rule_set().get("Metadata"), is_not(None)
+        )
+        assert_that(self.stack.emulator.concurrency, equal_to({}))
 
 
 if __name__ == "__main__":

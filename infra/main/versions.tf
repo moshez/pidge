@@ -39,5 +39,6 @@ locals {
   bucket_name  = coalesce(var.bucket_name, "pidge-mail-${local.account_id}")
   from_address = "${var.mailbox_name} <${var.mailbox_local_part}@${var.mail_domain}>"
   rule_set     = "pidge"
+  function_arn = "arn:aws:lambda:${var.region}:${local.account_id}:function:pidge"
   rule_name    = "pidge-inbound"
 }

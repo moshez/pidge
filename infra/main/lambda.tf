@@ -37,7 +37,24 @@ data "aws_iam_policy_document" "lambda" {
   statement {
     sid       = "TriggerIndexer"
     actions   = ["lambda:InvokeFunction"]
-    resources = ["arn:aws:lambda:${var.region}:${local.account_id}:function:pidge"]
+    resources = [local.function_arn]
+  }
+  # Kill switch (budget.tf). SetActiveReceiptRuleSet has no resource type in
+  # IAM, so it cannot be scoped to the rule set; this region is the limit.
+  statement {
+    sid       = "KillSwitchStopReceiving"
+    actions   = ["ses:SetActiveReceiptRuleSet"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.region]
+    }
+  }
+  statement {
+    sid       = "KillSwitchStopFunction"
+    actions   = ["lambda:PutFunctionConcurrency"]
+    resources = [local.function_arn]
   }
 }
 
@@ -69,7 +86,15 @@ resource "aws_lambda_function" "pidge" {
       CONFIGURATION_SET = aws_sesv2_configuration_set.pidge.configuration_set_name
       MESSAGE_ID_DOMAIN = var.message_id_domain
       ISSUER            = "https://${aws_cognito_user_pool.pidge.endpoint}"
+      # budget.tf: SNS records from this topic trip the kill switch.
+      KILL_SWITCH_TOPIC_ARN = aws_sns_topic.killswitch.arn
     }
+  }
+
+  # The kill switch sets reserved concurrency to 0 out of band; an apply must
+  # not quietly undo it (RECOVERY.md removes it deliberately).
+  lifecycle {
+    ignore_changes = [reserved_concurrent_executions]
   }
 
   depends_on = [

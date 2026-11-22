@@ -64,3 +64,20 @@ variable "ephemeral_storage_mb" {
   type        = number
   default     = 2048
 }
+
+variable "budget_limit_usd" {
+  description = "Monthly cost budget in USD. Expected spend is about $0.30 a month."
+  type        = string
+  default     = "5"
+}
+
+variable "budget_alert_email" {
+  description = "Where budget alerts go. Must be outside the mail domain: alerts must not land in the mailbox they are about."
+  type        = string
+}
+
+variable "deploy_role_name" {
+  description = "The GitHub OIDC deploy role created by infra/bootstrap; the 200% budget action denies it everything."
+  type        = string
+  default     = "pidge-deploy"
+}

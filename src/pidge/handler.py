@@ -9,6 +9,7 @@ from . import jsonvalue
 from .auth import BearerValidator
 from .indexer import run_tracked
 from .ingest import INBOUND, ingest_or_record
+from .killswitch import KillSwitch, is_trip, trip
 from .outbox import OUTBOX, activate
 from .reconcile import reconcile
 from .sesevents import confirm
@@ -36,11 +37,13 @@ class App:
         services: The flow context and shard cache.
         validator: Checks bearer tokens.
         tools: The MCP tools.
+        killswitch: The budget kill switch.
     """
 
     services: Services
     validator: BearerValidator
     tools: Sequence[Tool]
+    killswitch: KillSwitch
 
 
 def object_key(record: Mapping[str, object]) -> str:
@@ -111,6 +114,8 @@ def dispatch(app: App, event: Mapping[str, object]) -> object:
     Raises:
         ValueError: If the event has an unrecognized shape.
     """
+    if is_trip(app.killswitch, event):
+        return trip(app.killswitch)
     if "Records" in event:
         return handle_s3(app, event)
     if event.get("source") == "aws.ses":

@@ -20,6 +20,7 @@ from ..outbox import read_state
 from ..ports import Envelope, SendRejected
 from ..toolkit import Services
 from ..tools_read import READ_TOOLS
+from .account import Account
 from .checks import failure, includes
 from .flaky import GOOD, FlakyStore, client_error
 from .fakes import (
@@ -113,7 +114,12 @@ class TestDispatch(unittest.TestCase):
         self.world: World = make_world(self)
         cache = new_cache(self.world, "cache")
         services = Services(context=self.world.context, cache=cache)
-        self.app = App(services=services, validator=GOOD, tools=READ_TOOLS)
+        self.app = App(
+            services=services,
+            validator=GOOD,
+            tools=READ_TOOLS,
+            killswitch=Account.create().killswitch(),
+        )
 
     def test_s3(self) -> None:
         """Inbound mail is ingested and queued mail is sent."""

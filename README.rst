@@ -39,6 +39,14 @@ Layout
 ``.github/workflows/deploy.yml``
     Pushes that tested image and applies the main stack on every push to ``trunk``.
 
+Cost guardrail
+--------------
+
+A monthly budget emails at 50% and at 100% forecast. At 100% actual, a kill
+switch stops SES receiving and the function. At 200%, a budget action denies
+the function's and the deploy role's IAM permissions. See
+`RECOVERY.md <RECOVERY.md>`_.
+
 Setup
 -----
 

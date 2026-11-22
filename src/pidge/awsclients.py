@@ -48,6 +48,34 @@ class LambdaClient(Protocol):
         """
 
 
+class ConcurrencyClient(Protocol):
+    """The subset of the boto3 ``lambda`` client that the throttle uses."""
+
+    def put_function_concurrency(self, **kwargs: object) -> Mapping[str, object]:
+        """Set a function's reserved concurrency.
+
+        Args:
+            **kwargs: Request parameters.
+
+        Returns:
+            The response.
+        """
+
+
+class SESClient(Protocol):
+    """The subset of the boto3 ``ses`` (v1) client that this module uses."""
+
+    def set_active_receipt_rule_set(self, **kwargs: object) -> Mapping[str, object]:
+        """Set (or, with no name, clear) the active receipt rule set.
+
+        Args:
+            **kwargs: Request parameters.
+
+        Returns:
+            The response.
+        """
+
+
 def error_code(error: Exception) -> str:
     """Read the AWS error code from a botocore ClientError.
 
@@ -145,4 +173,60 @@ class LambdaInvoker:
             FunctionName=self._function,
             InvocationType="Event",
             Payload=json.dumps(payload).encode("utf-8"),
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class SesReceiptRules:
+    """Turns SES receiving off.
+
+    Construct it with :meth:`create`.
+    """
+
+    _client: SESClient
+
+    @classmethod
+    def create(cls, client: SESClient) -> "SesReceiptRules":
+        """Wrap a boto3 ``ses`` client.
+
+        Args:
+            client: The client.
+
+        Returns:
+            The receipt rule control.
+        """
+        return cls(_client=client)
+
+    def deactivate(self) -> None:
+        """Leave no receipt rule set active (SetActiveReceiptRuleSet, no name)."""
+        self._client.set_active_receipt_rule_set()
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class LambdaThrottle:
+    """Stops a function by setting its reserved concurrency to 0.
+
+    Construct it with :meth:`create`.
+    """
+
+    _client: ConcurrencyClient
+    _function: str
+
+    @classmethod
+    def create(cls, client: ConcurrencyClient, function: str) -> "LambdaThrottle":
+        """Wrap a boto3 ``lambda`` client.
+
+        Args:
+            client: The client.
+            function: The function name.
+
+        Returns:
+            The throttle.
+        """
+        return cls(_client=client, _function=function)
+
+    def stop(self) -> None:
+        """Set the function's reserved concurrency to 0."""
+        self._client.put_function_concurrency(
+            FunctionName=self._function, ReservedConcurrentExecutions=0
         )
