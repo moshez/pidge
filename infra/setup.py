@@ -671,7 +671,7 @@ def main() -> None:
     )
     parser.add_argument("--budget-limit", default="5", help="monthly budget in USD")
     parser.add_argument("--domain", default="ncolony.org")
-    parser.add_argument("--region", default="us-west-2")
+    parser.add_argument("--region", default="us-east-2")
     parser.add_argument("--repo", default="moshez/pidge")
     parser.add_argument(
         "--cognito-prefix",

@@ -5,7 +5,7 @@ code) to app clients that allow the ALLOW_USER_AUTH flow, and Cognito
 registers DCR clients without it. Run this after an MCP client registers
 (infra/setup.py does this while you connect your first client):
 
-    AWS_REGION=us-west-2 USER_POOL_ID=<pool id> python3 infra/scripts/allow_email_codes.py
+    AWS_REGION=us-east-2 USER_POOL_ID=<pool id> python3 infra/scripts/allow_email_codes.py
 
 It adds ALLOW_USER_AUTH to every DCR client that lacks it, keeping every
 other client setting. Idempotent.

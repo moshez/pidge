@@ -10,7 +10,7 @@ image="${1:?usage: smoke_image.sh IMAGE}"
 name="pidge-smoke-$$"
 port="${SMOKE_PORT:-9000}"
 url="http://127.0.0.1:${port}/2015-03-31/functions/function/invocations"
-host="abc.lambda-url.us-west-2.on.aws"
+host="abc.lambda-url.us-east-2.on.aws"
 
 docker run --rm --entrypoint python3 "$image" -c '
 import sqlite3
@@ -20,12 +20,12 @@ print("imports ok, sqlite", sqlite3.sqlite_version)
 '
 
 docker run -d --name "$name" -p "127.0.0.1:${port}:8080" \
-  -e AWS_REGION=us-west-2 -e AWS_DEFAULT_REGION=us-west-2 \
+  -e AWS_REGION=us-east-2 -e AWS_DEFAULT_REGION=us-east-2 \
   -e AWS_ACCESS_KEY_ID=smoke -e AWS_SECRET_ACCESS_KEY=smoke \
   -e MAIL_DOMAIN=example.org -e FROM_ADDRESS=mail@example.org \
   -e OWNER_ADDRESS=owner@example.net -e CONFIGURATION_SET=pidge \
-  -e MESSAGE_ID_DOMAIN=us-west-2.amazonses.com -e BUCKET=smoke \
-  -e ISSUER=https://cognito-idp.us-west-2.amazonaws.com/us-west-2_smoke \
+  -e MESSAGE_ID_DOMAIN=us-east-2.amazonses.com -e BUCKET=smoke \
+  -e ISSUER=https://cognito-idp.us-east-2.amazonaws.com/us-east-2_smoke \
   "$image" >/dev/null
 trap 'docker logs "$name" 2>&1 | tail -20; docker rm -f "$name" >/dev/null' EXIT
 

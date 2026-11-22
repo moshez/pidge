@@ -41,15 +41,15 @@ import boto3
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-REGION = "us-west-2"
+REGION = "us-east-2"
 BUCKET = "pidge-mail-e2e"
 DOMAIN = "example.org"
 FROM_ADDRESS = f"mail@{DOMAIN}"
 OWNER = "owner@example.net"
-FUNCTION_HOST = "abc123.lambda-url.us-west-2.on.aws"
+FUNCTION_HOST = "abc123.lambda-url.us-east-2.on.aws"
 RESOURCE = f"https://{FUNCTION_HOST}/mcp"
 SCOPE = f"{RESOURCE}/full"
-KILL_SWITCH_TOPIC = "arn:aws:sns:us-west-2:123456789012:budget-killswitch"
+KILL_SWITCH_TOPIC = "arn:aws:sns:us-east-2:123456789012:budget-killswitch"
 MOTO_IMAGE = os.environ.get("MOTO_IMAGE", "motoserver/moto:5.2.5")
 CONTAINER_HOST = "host.docker.internal"
 ASYNC_ATTEMPTS = 3  # Lambda's default: the first try plus two retries
@@ -353,7 +353,7 @@ class Stack:
         self.emulator = Emulator(self.moto_port)
         self.proxy_url = f"http://127.0.0.1:{self.emulator.port}"
         (self.workdir / "aws-config").write_text(
-            "[default]\nregion = us-west-2\ns3 =\n    addressing_style = path\n"
+            "[default]\nregion = us-east-2\ns3 =\n    addressing_style = path\n"
         )
         (self.workdir / "faketime").mkdir()
         self.faketime_lib = find_faketime()
@@ -404,7 +404,7 @@ class Stack:
             FROM_ADDRESS=FROM_ADDRESS,
             OWNER_ADDRESS=OWNER,
             CONFIGURATION_SET="pidge",
-            MESSAGE_ID_DOMAIN="us-west-2.amazonses.com",
+            MESSAGE_ID_DOMAIN="us-east-2.amazonses.com",
             ISSUER=self.emulator.issuer,
             KILL_SWITCH_TOPIC_ARN=KILL_SWITCH_TOPIC,
             LD_PRELOAD="/e2e/libfaketime.so.1",

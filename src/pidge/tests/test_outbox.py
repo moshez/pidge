@@ -41,7 +41,7 @@ from .fakes import (
 )
 from .flaky import racing
 
-SES_MESSAGE_ID = "<ses-1@us-west-2.amazonses.com>"
+SES_MESSAGE_ID = "<ses-1@us-east-2.amazonses.com>"
 
 
 def queued_mime(world: World, outbox_id: str) -> str:

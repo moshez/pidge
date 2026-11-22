@@ -27,7 +27,7 @@ from .checks import includes
 from .flaky import GOOD
 from .fakes import World, make_world, new_cache, sample_raw
 
-HOST = "abc.lambda-url.us-west-2.on.aws"
+HOST = "abc.lambda-url.us-east-2.on.aws"
 
 
 def request(method: str, path: str, body: object, token: str) -> Mapping[str, object]:

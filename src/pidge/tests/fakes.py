@@ -24,8 +24,8 @@ SETTINGS = Settings(
     from_address="Me <me@example.org>",
     owner_address="owner@example.net",
     configuration_set="pidge",
-    message_id_domain="us-west-2.amazonses.com",
-    issuer="https://cognito-idp.us-west-2.amazonaws.com/us-west-2_TEST",
+    message_id_domain="us-east-2.amazonses.com",
+    issuer="https://cognito-idp.us-east-2.amazonaws.com/us-east-2_TEST",
 )
 
 

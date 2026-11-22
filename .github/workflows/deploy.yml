@@ -6,7 +6,7 @@
 #   variables: AWS_DEPLOY_ROLE_ARN, TF_STATE_BUCKET, MAIL_DOMAIN, OWNER_EMAIL,
 #              COGNITO_DOMAIN_PREFIX; optionally
 #              ECR_REPOSITORY (default pidge), MESSAGE_ID_DOMAIN (default
-#              us-west-2.amazonses.com) and BUDGET_LIMIT_USD (default 5)
+#              us-east-2.amazonses.com) and BUDGET_LIMIT_USD (default 5)
 name: deploy
 
 on:
@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-west-2
+  AWS_REGION: us-east-2
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'pidge' }}
 
 jobs:
@@ -96,7 +96,7 @@ jobs:
           TF_VAR_cognito_domain_prefix: ${{ vars.COGNITO_DOMAIN_PREFIX }}
           TF_VAR_image_uri: ${{ steps.push.outputs.repository_url }}
           TF_VAR_image_digest: ${{ steps.push.outputs.digest }}
-          TF_VAR_message_id_domain: ${{ vars.MESSAGE_ID_DOMAIN || 'us-west-2.amazonses.com' }}
+          TF_VAR_message_id_domain: ${{ vars.MESSAGE_ID_DOMAIN || 'us-east-2.amazonses.com' }}
           TF_VAR_budget_limit_usd: ${{ vars.BUDGET_LIMIT_USD || '5' }}
         run: |
           tofu init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"

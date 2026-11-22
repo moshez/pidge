@@ -21,7 +21,7 @@ provider "aws" {
 variable "region" {
   description = "The AWS region for everything (SES receiving must be supported there)."
   type        = string
-  default     = "us-west-2"
+  default     = "us-east-2"
 }
 
 variable "state_bucket" {

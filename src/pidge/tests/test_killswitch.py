@@ -51,7 +51,7 @@ class TestKillSwitch(unittest.TestCase):
 
     def test_other_topics_do_not_trip(self) -> None:
         """An SNS record from any other topic is not the kill switch."""
-        other = sns_event("arn:aws:sns:us-west-2:123456789012:something-else")
+        other = sns_event("arn:aws:sns:us-east-2:123456789012:something-else")
         assert_that(failure(lambda: dispatch(self.app, other)), instance_of(Exception))
         assert_that(self.account.calls, equal_to([]))
 

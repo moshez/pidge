@@ -12,8 +12,8 @@ from hamcrest import assert_that, equal_to, instance_of
 from ..auth import AuthError, ScopeError, TokenValidator
 from .checks import failure, includes
 
-ISSUER = "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_TEST"
-RESOURCE = "https://abc.lambda-url.us-west-2.on.aws/mcp"
+ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_TEST"
+RESOURCE = "https://abc.lambda-url.us-east-2.on.aws/mcp"
 SCOPE = f"{RESOURCE}/full"
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 

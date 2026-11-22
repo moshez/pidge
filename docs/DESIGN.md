@@ -19,7 +19,7 @@ Nothing runs continuously. Every cost is per request or per GB stored.
 | | |
 |---|---|
 | Mail domain | `ncolony.org` |
-| Region | `us-west-2` (Oregon) |
+| Region | `us-east-2` (Ohio) |
 | DNS | Cloudflare, records managed by Terraform |
 | Backfill | None. The mailbox starts empty. |
 
@@ -304,11 +304,11 @@ The main stack manages these records with the Cloudflare provider (v5, resource 
 
 | Name | Type | Value | Purpose |
 |---|---|---|---|
-| `ncolony.org` | MX | `10 inbound-smtp.us-west-2.amazonaws.com` | SES receiving |
+| `ncolony.org` | MX | `10 inbound-smtp.us-east-2.amazonaws.com` | SES receiving |
 | `<t1>._domainkey.ncolony.org` | CNAME | `<t1>.dkim.amazonses.com` | Easy DKIM + domain verification |
 | `<t2>._domainkey.ncolony.org` | CNAME | `<t2>.dkim.amazonses.com` | 〃 |
 | `<t3>._domainkey.ncolony.org` | CNAME | `<t3>.dkim.amazonses.com` | 〃 |
-| `bounce.ncolony.org` *(optional)* | MX | `10 feedback-smtp.us-west-2.amazonses.com` | custom MAIL FROM |
+| `bounce.ncolony.org` *(optional)* | MX | `10 feedback-smtp.us-east-2.amazonses.com` | custom MAIL FROM |
 | `bounce.ncolony.org` *(optional)* | TXT | `"v=spf1 include:amazonses.com ~all"` | SPF alignment |
 | `_dmarc.ncolony.org` | TXT | `"v=DMARC1; p=none;"` | DMARC |
 
@@ -326,7 +326,7 @@ resource "cloudflare_dns_record" "mx" {
   zone_id  = data.cloudflare_zone.ncolony.zone_id
   name     = "ncolony.org"
   type     = "MX"
-  content  = "inbound-smtp.us-west-2.amazonaws.com"
+  content  = "inbound-smtp.us-east-2.amazonaws.com"
   priority = 10
   ttl      = 1        # automatic
   proxied  = false

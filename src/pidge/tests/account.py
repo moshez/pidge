@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from ..awsclients import LambdaThrottle, SesReceiptRules
 from ..killswitch import KillSwitch
 
-TOPIC = "arn:aws:sns:us-west-2:123456789012:budget-killswitch"
+TOPIC = "arn:aws:sns:us-east-2:123456789012:budget-killswitch"
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,7 +1,7 @@
 variable "region" {
-  description = "AWS region. SES must support receiving there; the backend block assumes us-west-2."
+  description = "AWS region. SES must support receiving there; the backend block assumes us-east-2."
   type        = string
-  default     = "us-west-2"
+  default     = "us-east-2"
 }
 
 variable "mail_domain" {
@@ -50,7 +50,7 @@ variable "mailbox_name" {
 variable "message_id_domain" {
   description = "The domain SES puts in the Message-ID of mail it sends from this region. infra/setup.py checks it after the first deploy."
   type        = string
-  default     = "us-west-2.amazonses.com"
+  default     = "us-east-2.amazonses.com"
 }
 
 variable "enable_mail_from" {

@@ -38,7 +38,7 @@ uses them. Otherwise it signs you in with `aws login`:
 
 ## What it does
 
-1. Checks that no other SES receipt rule set is active in us-west-2 (only
+1. Checks that no other SES receipt rule set is active in us-east-2 (only
    one can be, and the stack makes its own active).
 2. Asks for a Cloudflare API token, verifies it can edit the zone (by adding
    and removing a test TXT record), checks that no existing MX record would
@@ -72,7 +72,7 @@ The script stops and tells you when one of these comes up:
   it when asked (input is hidden).
 - **Merging.** Answer `y` and the script merges, or merge on GitHub yourself.
 - **The SES verification email** ("Amazon Web Services – Email Address
-  Verification Request in region US West (Oregon)"). Click the link. Until
+  Verification Request in region US East (Ohio)"). Click the link. Until
   the account leaves the SES sandbox, mail (including sign-in codes) only
   reaches verified addresses.
 - **Connecting your MCP client.** In Claude: Settings, Connectors, Add custom
@@ -91,7 +91,7 @@ registers; only the last step has anything left to do.
 | `--email` | (required) your own address, outside the mail domain: the mailbox owner and where cost alerts go |
 | `--budget-limit` | `5` (USD a month; expected spend is about $0.30) |
 | `--domain` | `ncolony.org` (its DNS must be on Cloudflare) |
-| `--region` | `us-west-2` |
+| `--region` | `us-east-2` |
 | `--repo` | `moshez/pidge` |
 | `--cognito-prefix` | `pidge-<first label of the domain>`; must be unique in the region |
 

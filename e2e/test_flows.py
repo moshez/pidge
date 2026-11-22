@@ -321,7 +321,7 @@ class TestOutbound(EndToEnd):
         self.stack.publish("Send", sends[0])
         assert_that(self.tags(outbox_id), equal_to(["sent"]))
         stored = self.stack.read(f"msgs/{outbox_id}/raw.eml").decode()
-        assigned = f"<{sends[0].message_id}@us-west-2.amazonses.com>"
+        assigned = f"<{sends[0].message_id}@us-east-2.amazonses.com>"
         assert_that(stored, contains_string(f"Message-ID: {assigned}"))
         self.stack.publish("Delivery", sends[0])
         assert_that(self.outbox(outbox_id)["status"], equal_to("delivered"))

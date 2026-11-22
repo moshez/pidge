@@ -5,7 +5,7 @@ terraform {
   #   tofu init -backend-config="bucket=<state bucket>"
   backend "s3" {
     key          = "pidge/main.tfstate"
-    region       = "us-west-2"
+    region       = "us-east-2"
     use_lockfile = true
   }
 

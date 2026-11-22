@@ -14,10 +14,10 @@ Recover with root or other administrator credentials. The deploy role can't
 do it: once the deny is attached, it can do nothing at all. Find out why spend
 went up before you undo anything.
 
-The examples use the AWS CLI in us-west-2:
+The examples use the AWS CLI in us-east-2:
 
 ```sh
-export AWS_REGION=us-west-2
+export AWS_REGION=us-east-2
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ```
 
