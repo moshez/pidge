@@ -138,6 +138,14 @@ def ensure_aws_cli() -> None:
         )
 
 
+def in_container() -> bool:
+    """Tell whether this runs in a container (Docker, Podman, Colima)."""
+    markers = ("/.dockerenv", "/run/.containerenv")
+    return any(os.path.exists(path) for path in markers) or bool(
+        os.environ.get("container")
+    )
+
+
 def aws_credentials(region: str) -> None:
     """Make AWS credentials available to boto3 and OpenTofu, signing in if needed.
 
@@ -182,14 +190,23 @@ def aws_credentials(region: str) -> None:
         if login_profile == LOGIN_PROFILE:
             run("aws", "configure", "set", "region", region, "--profile", LOGIN_PROFILE)
         say("Signing in to AWS")
-        print(
-            "    A browser window opens. Sign in to the AWS console as the root\n"
-            "    user or an administrator, then allow the AWS CLI. (No browser on\n"
-            f"    this machine? Run `aws login --remote --profile {login_profile}`\n"
-            "    yourself, then run this script again.)",
-            flush=True,
-        )
-        if subprocess.run(["aws", "login", "--profile", login_profile]).returncode:
+        command = ["aws", "login", "--profile", login_profile]
+        if in_container():
+            command.append("--remote")
+            print(
+                "    In a container, the browser can't reach the CLI's callback, so:\n"
+                "    open the link below on your computer, sign in to the AWS console\n"
+                "    as the root user or an administrator, and paste the code it\n"
+                "    shows back here.",
+                flush=True,
+            )
+        else:
+            print(
+                "    A browser window opens. Sign in to the AWS console as the root\n"
+                "    user or an administrator, then allow the AWS CLI.",
+                flush=True,
+            )
+        if subprocess.run(command).returncode:
             fail(
                 "`aws login` did not finish. An IAM user or role needs the "
                 "SignInLocalDevelopmentAccess managed policy for it; the root user "

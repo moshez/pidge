@@ -33,8 +33,9 @@ uses them. Otherwise it signs you in with `aws login`:
   `~/.aws/config`: `pidge-login` (the sign-in) and `pidge-setup`, which reads
   that sign-in through `credential_process` so OpenTofu can use it too. A
   later run signs you in again only if the session has expired.
-- No browser on that machine? Run `aws login --remote --profile pidge-login`,
-  open the link it prints anywhere, paste the code back, then run the script.
+- In a container (Docker, Colima, Podman), the browser can't reach the
+  CLI's local callback, so the script uses `aws login --remote`: open the
+  link it prints on your computer, sign in, and paste the code back.
 
 ## What it does
 
