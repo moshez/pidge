@@ -16,11 +16,14 @@ import boto3
 from cognito_pool import pool_update
 
 
-def main() -> None:
-    """Enable DCR, keeping every other pool setting."""
-    pool_id = os.environ["USER_POOL_ID"]
-    scopes = os.environ["DCR_SCOPES"].split()
-    client = boto3.client("cognito-idp", region_name=os.environ["AWS_REGION"])
+def enable_dcr(client, pool_id: str, scopes: list[str]) -> None:
+    """Enable DCR on a pool, keeping every other pool setting.
+
+    Args:
+        client: A boto3 cognito-idp client.
+        pool_id: The user pool ID.
+        scopes: The custom scopes registered clients may request.
+    """
     described = client.describe_user_pool(UserPoolId=pool_id)["UserPool"]
     request = pool_update(client, described)
     request["DcrConfiguration"] = {
@@ -32,6 +35,12 @@ def main() -> None:
     }
     client.update_user_pool(UserPoolId=pool_id, **request)
     print(f"Dynamic client registration enabled on {pool_id} for {scopes}")
+
+
+def main() -> None:
+    """Enable DCR on the pool named by the environment."""
+    client = boto3.client("cognito-idp", region_name=os.environ["AWS_REGION"])
+    enable_dcr(client, os.environ["USER_POOL_ID"], os.environ["DCR_SCOPES"].split())
 
 
 if __name__ == "__main__":

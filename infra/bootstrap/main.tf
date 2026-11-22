@@ -2,7 +2,7 @@
 #
 # It creates what the deploy workflow needs before it can run: the state
 # bucket, GitHub's OIDC provider, the deploy role, and the image repository.
-# See docs/SETUP.md, step 2.
+# Applied by infra/setup.py (see docs/SETUP.md).
 
 terraform {
   required_version = ">= 1.10"

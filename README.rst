@@ -35,7 +35,7 @@ Layout
 Setup
 -----
 
-See `docs/SETUP.md <docs/SETUP.md>`_ for the one-time manual steps.
+See `docs/SETUP.md <docs/SETUP.md>`_ for the one-time setup (one script, infra/setup.py).
 
 Development
 -----------

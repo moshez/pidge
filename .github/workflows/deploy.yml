@@ -1,7 +1,7 @@
 # Push the Lambda image built and smoke-tested by image.yml, then apply the
 # main stack, on every push to trunk.
 #
-# Needs (docs/SETUP.md, steps 3-5):
+# Needs (infra/setup.py sets these up):
 #   secrets: CLOUDFLARE_API_TOKEN
 #   variables: AWS_DEPLOY_ROLE_ARN, TF_STATE_BUCKET, MAIL_DOMAIN, OWNER_EMAIL,
 #              COGNITO_DOMAIN_PREFIX; optionally ECR_REPOSITORY (default pidge)
@@ -50,11 +50,6 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Preflight (MX records, active SES rule set)
-        run: |
-          infra/scripts/preflight.sh mx "${{ vars.MAIL_DOMAIN }}" "$AWS_REGION"
-          infra/scripts/preflight.sh ruleset "$AWS_REGION" pidge
-
       - name: Log in to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -71,6 +66,9 @@ jobs:
             --query 'imageDetails[0].imageDigest' --output text)
           echo "repository_url=$REPOSITORY_URL" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install boto3 (the Cognito DCR script needs it)
+        run: python3 -m pip install --user boto3
 
       - name: Set up OpenTofu
         uses: opentofu/setup-opentofu@v1

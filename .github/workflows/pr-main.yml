@@ -55,9 +55,6 @@ jobs:
       - name: Check formatting
         run: tofu fmt -check -recursive infra
 
-      - name: Check for competing MX records
-        run: infra/scripts/preflight.sh mx "${{ vars.MAIL_DOMAIN || 'ncolony.org' }}" us-west-2
-
       - name: Validate the stacks
         run: |
           for stack in infra/bootstrap infra/main; do

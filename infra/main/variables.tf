@@ -48,7 +48,7 @@ variable "mailbox_name" {
 }
 
 variable "message_id_domain" {
-  description = "The domain SES puts in the Message-ID of mail it sends from this region. See docs/SETUP.md, step 9."
+  description = "The domain SES puts in the Message-ID of mail it sends from this region. infra/setup.py checks it after the first deploy."
   type        = string
   default     = "us-west-2.amazonses.com"
 }
