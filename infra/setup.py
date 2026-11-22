@@ -2,9 +2,12 @@
 
     python3 infra/setup.py --email you@example.net
 
-Run it from the repository root, signed in to AWS (administrator) and to the
-GitHub CLI. It needs OpenTofu and boto3. Every step checks what already
-exists first, so re-running it after a failure picks up where it stopped.
+Run it from the repository root, signed in to the GitHub CLI. It needs
+OpenTofu, boto3 and AWS CLI 2.32 or later (installed with Homebrew if it is
+missing). If there are no usable AWS credentials, it runs `aws login`, which
+opens a browser: sign in to the AWS console as the root user or an
+administrator. Every step checks what already exists first, so re-running it
+after a failure picks up where it stopped.
 
 The only things it asks you to do are the ones no API can do for you:
 create the Cloudflare token, click the SES verification link, merge the
@@ -27,6 +30,8 @@ import urllib.request
 import uuid
 
 import boto3
+import botocore.exceptions
+import botocore.session
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "infra" / "scripts"))
@@ -38,6 +43,12 @@ RULE_SET = "pidge"
 FUNCTION = "pidge"
 POOL = "pidge"
 PR = "1"
+LOGIN_PROFILE = "pidge-login"
+SETUP_PROFILE = "pidge-setup"
+MIN_AWS_CLI = (2, 32, 0)
+AWS_CLI_INSTALL = (
+    "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+)
 CLOUDFLARE = "https://api.cloudflare.com/client/v4"
 POLL = 10
 
@@ -82,6 +93,116 @@ def wait_for(check, what: str, timeout: float, every: float = POLL):
         if time.time() > deadline:
             fail(f"Gave up waiting for {what}.")
         time.sleep(every)
+
+
+# -- AWS credentials -----------------------------------------------------------
+
+
+def aws_works(profile: str | None, region: str) -> str | None:
+    """Return the account ID if this profile's credentials work."""
+    try:
+        session = boto3.Session(profile_name=profile, region_name=region)
+        return session.client("sts").get_caller_identity()["Account"]
+    except (botocore.exceptions.BotoCoreError, botocore.exceptions.ClientError):
+        return None
+
+
+def aws_cli_version() -> tuple[int, ...] | None:
+    if not shutil.which("aws"):
+        return None
+    result = subprocess.run(["aws", "--version"], capture_output=True, text=True)
+    words = (result.stdout or result.stderr).split()
+    version = words[0].partition("/")[2] if words else ""
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return None
+
+
+def ensure_aws_cli() -> None:
+    """Make sure an AWS CLI with `aws login` (2.32+) is on PATH."""
+    version = aws_cli_version()
+    if version and version >= MIN_AWS_CLI:
+        return
+    found = ".".join(map(str, version)) if version else "none"
+    if not shutil.which("brew"):
+        fail(f"AWS CLI 2.32 or later is needed (found {found}). See {AWS_CLI_INSTALL}")
+    say(f"Installing AWS CLI 2.32 or later with Homebrew (found {found})")
+    subprocess.run(["brew", "upgrade" if version else "install", "awscli"])
+    if (aws_cli_version() or ()) < MIN_AWS_CLI:
+        subprocess.run(["brew", "install", "awscli"])
+    if (aws_cli_version() or ()) < MIN_AWS_CLI:
+        fail(
+            f"`aws --version` is still older than 2.32 ({shutil.which('aws')}). "
+            f"Put Homebrew's aws first on PATH, or see {AWS_CLI_INSTALL}"
+        )
+
+
+def aws_credentials(region: str) -> None:
+    """Make AWS credentials available to boto3 and OpenTofu, signing in if needed.
+
+    Credentials that already work (keys, SSO, environment) are used as they
+    are. Otherwise the script runs `aws login` (console sign-in) and points
+    AWS_PROFILE at a profile whose credential_process reads that sign-in, so
+    OpenTofu, which cannot read `aws login` sessions itself, can use it too.
+    The sign-in lasts up to 12 hours; a later run signs in again if needed.
+    """
+    say("Checking AWS credentials")
+    try:
+        scoped = botocore.session.get_session().get_scoped_config()
+    except botocore.exceptions.ProfileNotFound:
+        scoped = {}
+    current = os.environ.get("AWS_PROFILE") or "default"
+    if not scoped.get("login_session"):
+        account = aws_works(None, region)
+        if account:
+            ok(f"using your existing credentials (account {account})")
+            return
+    login_profile = current if scoped.get("login_session") else LOGIN_PROFILE
+    ensure_aws_cli()
+    process = (
+        f"aws configure export-credentials --profile {login_profile} --format process"
+    )
+    run(
+        "aws",
+        "configure",
+        "set",
+        "credential_process",
+        process,
+        "--profile",
+        SETUP_PROFILE,
+    )
+    run("aws", "configure", "set", "region", region, "--profile", SETUP_PROFILE)
+    os.environ.pop("AWS_ACCESS_KEY_ID", None)
+    os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+    os.environ.pop("AWS_SESSION_TOKEN", None)
+    os.environ["AWS_PROFILE"] = SETUP_PROFILE
+    account = aws_works(SETUP_PROFILE, region)
+    if not account:
+        has_region = subprocess.run(
+            ["aws", "configure", "get", "region", "--profile", login_profile],
+            capture_output=True,
+        )
+        if has_region.returncode:
+            run("aws", "configure", "set", "region", region, "--profile", login_profile)
+        say("Signing in to AWS")
+        print(
+            "    A browser window opens. Sign in to the AWS console as the root\n"
+            "    user or an administrator, then allow the AWS CLI. (No browser on\n"
+            f"    this machine? Run `aws login --remote --profile {login_profile}`\n"
+            "    yourself, then run this script again.)",
+            flush=True,
+        )
+        if subprocess.run(["aws", "login", "--profile", login_profile]).returncode:
+            fail(
+                "`aws login` did not finish. An IAM user or role needs the "
+                "SignInLocalDevelopmentAccess managed policy for it; the root user "
+                "needs nothing extra."
+            )
+        account = aws_works(SETUP_PROFILE, region)
+    if not account:
+        fail(f"Signed in, but the {SETUP_PROFILE} profile still has no credentials.")
+    ok(f"signed in (account {account}); using AWS_PROFILE={SETUP_PROFILE}")
 
 
 class Setup:
@@ -129,9 +250,17 @@ class Setup:
             )
         ok("none besides Pidge's own" if name else "none active")
 
-    def cloudflare(self, path: str, token: str) -> dict:
+    def cloudflare(
+        self, path: str, token: str, method: str = "GET", body: dict | None = None
+    ) -> dict:
         request = urllib.request.Request(
-            f"{CLOUDFLARE}{path}", headers={"Authorization": f"Bearer {token}"}
+            f"{CLOUDFLARE}{path}",
+            data=json.dumps(body).encode() if body is not None else None,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
         )
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
@@ -163,11 +292,37 @@ class Setup:
             f"/zones/{zone}/dns_records?type=MX&name={urllib.parse.quote(self.domain)}",
             token,
         )["result"]
+        check = f"_pidge-setup-check.{self.domain}"
+        try:
+            for stale in self.cloudflare(
+                f"/zones/{zone}/dns_records?type=TXT&name={check}", token
+            )["result"]:
+                self.cloudflare(
+                    f"/zones/{zone}/dns_records/{stale['id']}", token, "DELETE"
+                )
+            probe = self.cloudflare(
+                f"/zones/{zone}/dns_records",
+                token,
+                "POST",
+                dict(
+                    type="TXT",
+                    name=check,
+                    content="pidge setup token check",
+                    ttl=60,
+                ),
+            )["result"]
+            self.cloudflare(f"/zones/{zone}/dns_records/{probe['id']}", token, "DELETE")
+        except OSError as error:
+            fail(
+                f"The token can read {self.domain} but not edit its DNS ({error}). "
+                "Give it Zone > DNS > Edit."
+            )
         ours = f"inbound-smtp.{self.region}.amazonaws.com"
         others = [r["content"] for r in records if r["content"].rstrip(".") != ours]
         if others:
             fail(f"{self.domain} has MX records that would compete with SES: {others}")
-        ok(f"token can edit {self.domain}, and no MX record competes with SES")
+        ok(f"token can edit {self.domain} (added and removed a test TXT record)")
+        ok("no MX record competes with SES")
         self.gh("secret", "set", "CLOUDFLARE_API_TOKEN", stdin=token)
         ok("stored as the GitHub secret CLOUDFLARE_API_TOKEN")
 
@@ -528,6 +683,7 @@ def main() -> None:
         parser.error("--email must be outside the mail domain")
     if args.cognito_prefix is None:
         args.cognito_prefix = f"pidge-{args.domain.split('.')[0]}"
+    aws_credentials(args.region)
     Setup(args).all()
 
 

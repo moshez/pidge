@@ -7,8 +7,7 @@ pip install boto3
 python3 infra/setup.py --email you@example.net
 ```
 
-Run it from the repository root on a machine signed in to AWS (administrator
-credentials for the account), with the GitHub CLI signed in (`gh auth
+Run it from the repository root, with the GitHub CLI signed in (`gh auth
 status`) and OpenTofu 1.10 or later installed. Your address is passed on the
 command line and stored as a GitHub variable, so it never lands in this
 public repository. It must be outside the mail domain: cost alerts go there
@@ -18,13 +17,33 @@ Every step checks what already exists before doing anything, so if the
 script stops (a failed deploy, a closed laptop), fix what it reports and run
 the same command again.
 
+## AWS credentials
+
+You don't need to set anything up. If the machine already has working AWS
+credentials (access keys, `aws sso login`, environment variables), the script
+uses them. Otherwise it signs you in with `aws login`:
+
+- A browser window opens. Sign in to the AWS console as the root user or as
+  an administrator, and allow the AWS CLI. The root user needs nothing
+  extra; an IAM user or role also needs the `SignInLocalDevelopmentAccess`
+  managed policy.
+- `aws login` needs AWS CLI 2.32 or later. If yours is older or missing, the
+  script installs it with Homebrew.
+- The sign-in lasts up to 12 hours. The script saves two profiles in
+  `~/.aws/config`: `pidge-login` (the sign-in) and `pidge-setup`, which reads
+  that sign-in through `credential_process` so OpenTofu can use it too. A
+  later run signs you in again only if the session has expired.
+- No browser on that machine? Run `aws login --remote --profile pidge-login`,
+  open the link it prints anywhere, paste the code back, then run the script.
+
 ## What it does
 
 1. Checks that no other SES receipt rule set is active in us-west-2 (only
    one can be, and the stack makes its own active).
-2. Asks for a Cloudflare API token, verifies it can edit the zone, checks
-   that no existing MX record would compete with SES, and stores the token
-   as the `CLOUDFLARE_API_TOKEN` secret.
+2. Asks for a Cloudflare API token, verifies it can edit the zone (by adding
+   and removing a test TXT record), checks that no existing MX record would
+   compete with SES, and stores the token as the `CLOUDFLARE_API_TOKEN`
+   secret.
 3. Applies `infra/bootstrap`: the Terraform state bucket, GitHub's OIDC
    provider, the deploy role (trusting only `trunk` of this repository, by
    immutable IDs it looks up), and the ECR repository.
