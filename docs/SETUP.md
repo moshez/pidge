@@ -21,25 +21,22 @@ Everything lives in **us-west-2**.
 - The GitHub CLI, signed in (`gh auth status`).
 - Python 3 with boto3 (`pip install boto3`) for the Cognito helper script in step 10.
 
-## 1. Check that nothing else uses SES receiving in us-west-2
+## 1. Nothing to check by hand first
 
-Only one SES receipt rule set can be active per region, and the main stack
-makes its own rule set active. Check what is active now:
+Two things would make the first deploy take mail away from somewhere else,
+and the workflows check both for you:
 
-```sh
-aws ses describe-active-receipt-rule-set --region us-west-2
-```
+- **Competing MX records** on the domain. Pull request CI and the deploy
+  both run `infra/scripts/preflight.sh mx`, which fails if the domain has any
+  MX record other than SES's own.
+- **Another active SES receipt rule set** in us-west-2. Only one can be
+  active per region, and the stack makes its own active. The deploy runs
+  `infra/scripts/preflight.sh ruleset` before `tofu apply` and stops if a
+  different rule set is active.
 
-If this prints nothing (or an error saying there is no active rule set),
-carry on. If it prints a rule set, that rule set will stop receiving mail
-after the first deploy; move its rules into Pidge first or pick another
-region.
-
-Also check that the domain has no MX records that would compete:
-
-```sh
-dig +short MX ncolony.org
-```
+If either check fails, the run stops before anything changes and the log
+says what it found. Remove the old MX records in Cloudflare, or move the
+other rule set's rules into `pidge`, and re-run.
 
 ## 2. Apply the bootstrap stack
 

@@ -50,6 +50,11 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Preflight (MX records, active SES rule set)
+        run: |
+          infra/scripts/preflight.sh mx "${{ vars.MAIL_DOMAIN }}" "$AWS_REGION"
+          infra/scripts/preflight.sh ruleset "$AWS_REGION" pidge
+
       - name: Log in to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
