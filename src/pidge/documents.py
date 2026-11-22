@@ -115,7 +115,11 @@ def addresses_text(doc: IndexDoc, name: str) -> str:
 
 
 def attachment_names(doc: IndexDoc) -> Sequence[str]:
-    """List a message's attachment names.
+    """List a message's real attachment names.
+
+    The stored HTML body and inline parts are listed in ``headers.json`` too,
+    but are left out here, so they neither set ``has_attachments`` nor become
+    searchable words.
 
     Args:
         doc: The message.
@@ -123,7 +127,11 @@ def attachment_names(doc: IndexDoc) -> Sequence[str]:
     Returns:
         The stored attachment names.
     """
-    return jsonvalue.pluck(doc.headers, "attachments", "name")
+    return [
+        jsonvalue.get_str(entry, "name")
+        for entry in jsonvalue.objects(doc.headers, "attachments")
+        if jsonvalue.get_str(entry, "kind", "attachment") == "attachment"
+    ]
 
 
 def searchable_text(doc: IndexDoc) -> Sequence[str]:

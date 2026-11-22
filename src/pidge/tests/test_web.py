@@ -303,7 +303,7 @@ class TestTools(unittest.TestCase):
         """Read a message and download its attachment."""
         message = structured(self.call("get_message", {"id": self.original}))
         includes(message, dict(body="Tacos?\n", direction="in"))
-        args = {"id": self.original, "name": "0-menu.pdf"}
+        args = {"id": self.original, "name": "1-menu.pdf"}
         link = structured(self.call("get_attachment", args))
         assert_that(jsonvalue.get_str(link, "url"), starts_with("memory:"))
 
@@ -351,7 +351,7 @@ class TestTools(unittest.TestCase):
             "subject": "Lunch",
             "body": "Yes",
             "in_reply_to_id": self.original,
-            "attach_from": [{"id": self.original, "name": "0-menu.pdf"}],
+            "attach_from": [{"id": self.original, "name": "1-menu.pdf"}],
         }
         assert_that(structured(self.call("send_email", args)), has_key("outbox_id"))
         assert_that(self.world.sender.deliveries(), has_length(0))

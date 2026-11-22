@@ -7,6 +7,9 @@ test (default ``pidge:candidate``).
 import email
 import email.policy
 import os
+import pathlib
+import re
+import tempfile
 import unittest
 import urllib.parse
 import urllib.request
@@ -37,6 +40,8 @@ from .harness import (
 )
 
 STACK: Stack
+
+FIXTURES = pathlib.Path(__file__).parent.parent / "src/pidge/tests/fixtures"
 
 
 def setUpModule() -> None:  # noqa: N802
@@ -206,13 +211,38 @@ class TestInbound(EndToEnd):
         assert_that(read["headers"]["subject"], equal_to("Quarterly report"))
         assert_that(read["body"], contains_string("Numbers inside."))
         name = read["headers"]["attachments"][0]["name"]
+        assert_that(self.download(ulid, name), equal_to(b"%PDF-1.7 data"))
+        assert_that(self.stack.tool("list_tags"), equal_to({"tags": {"inbox": 1}}))
+
+    def download(self, ulid: str, name: str) -> bytes:
+        """Fetch an attachment through get_attachment's presigned link."""
         link = self.stack.tool("get_attachment", id=ulid, name=name)
         assert isinstance(link, dict)
         url = urllib.parse.urlparse(link["url"])
         assert_that(url.hostname, equal_to(CONTAINER_HOST))
         local = url._replace(netloc=f"127.0.0.1:{self.stack.emulator.port}").geturl()
-        assert_that(urllib.request.urlopen(local).read(), equal_to(b"%PDF-1.7 data"))
-        assert_that(self.stack.tool("list_tags"), equal_to({"tags": {"inbox": 1}}))
+        data: bytes = urllib.request.urlopen(local).read()
+        return data
+
+    def test_html_body_renders_from_local_files(self) -> None:
+        """0-body.html and the files it references download into one directory."""
+        raw = (FIXTURES / "related.eml").read_bytes()
+        ulid = self.deliver(raw)
+        read = self.stack.tool("get_message", id=ulid)
+        assert isinstance(read, dict)
+        listed = [entry["name"] for entry in read["headers"]["attachments"]]
+        assert_that(listed[0], equal_to("0-body.html"))
+        html = self.download(ulid, "0-body.html").decode("utf-8")
+        referenced = set(re.findall(r'(?:src|background)="([^"]+)"', html))
+        assert_that(
+            referenced, equal_to({"2-logo.png", "3-inline-1.jpg", "cid:missing@x"})
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pathlib.Path(directory)
+            for name in referenced - {"cid:missing@x"}:
+                (folder / name).write_bytes(self.download(ulid, name))
+            assert_that((folder / "2-logo.png").read_bytes()[:4], equal_to(b"\x89PNG"))
+        assert_that(self.search(has_attachments=True), has_length(1))
 
     def test_setup_notification(self) -> None:
         """SES's setup notification is acknowledged and not stored as mail."""

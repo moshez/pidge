@@ -4,7 +4,8 @@ import dataclasses
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from . import jsonvalue
-from .mimeparse import Attachment, Headers, ParsedMessage
+from .mimeparse import Headers, ParsedMessage
+from .mimeparts import Attachment
 from .model import Meta, make_tags, meta_json, parse_meta
 from .store import NotFound, ObjectStore, PreconditionFailed
 
@@ -98,7 +99,10 @@ def write_attachments(
     for part in attachments:
         store.put(attachment_key(ulid, part.name), part.data)
         entry = dict(
-            name=part.name, content_type=part.content_type, size=len(part.data)
+            name=part.name,
+            content_type=part.content_type,
+            size=len(part.data),
+            kind=part.kind.name.lower(),
         )
         listing.append(entry)
     return listing
@@ -124,9 +128,10 @@ def write_message(store: ObjectStore, ulid: str, message: NewMessage) -> bool:
     store.put(message_key(ulid, "raw.eml"), message.raw)
     store.put(message_key(ulid, "body.txt"), parsed.body.encode("utf-8"))
     store.put(message_key(ulid, "headers.json"), headers_json(parsed.headers, extra))
+    meta = dataclasses.replace(message.meta, unresolved_cids=parsed.unresolved_cids)
     created = True
     try:
-        store.put_new(message_key(ulid, "meta.json"), meta_json(message.meta))
+        store.put_new(message_key(ulid, "meta.json"), meta_json(meta))
     except PreconditionFailed:
         created = False
     store.put(UNINDEXED + ulid, b"")

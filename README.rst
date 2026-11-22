@@ -51,6 +51,7 @@ Setup
 -----
 
 See `docs/SETUP.md <docs/SETUP.md>`_ for the one-time setup (one script, infra/setup.py).
+`docs/DESIGN.md <docs/DESIGN.md>`_ is the design: storage layout, flows, tools.
 
 Development
 -----------

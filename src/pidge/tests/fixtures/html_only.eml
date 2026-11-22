@@ -1,0 +1,11 @@
+From: Alice <alice@example.com>
+To: me@example.org
+Subject: HTML only
+Date: Thu, 01 Jan 2026 00:00:00 +0000
+Message-ID: <html-only@example.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset=iso-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+<html><head><meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Diso-8859-1"></head>
+<body><p>Caf=E9 menu</p></body></html>

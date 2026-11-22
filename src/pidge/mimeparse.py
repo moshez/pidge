@@ -5,31 +5,12 @@ from __future__ import annotations
 import dataclasses
 import email
 import email.policy
-import html
-import html.parser
-import re
 from collections.abc import Sequence
-from email.message import EmailMessage, MIMEPart
+from email.message import EmailMessage
 from email.utils import formatdate, getaddresses, make_msgid, parsedate_to_datetime
 
-_SKIPPED_TAGS = frozenset({"script", "style", "head"})
-_BLOCK_TAGS = frozenset({"p", "div", "br", "li", "tr", "h1", "h2", "h3", "table"})
-_UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class Attachment:
-    """A decoded attachment.
-
-    Attributes:
-        name: The file name (sanitized for use in an S3 key).
-        content_type: The MIME type.
-        data: The decoded bytes.
-    """
-
-    name: str
-    content_type: str
-    data: bytes
+from .htmltext import html_to_text
+from .mimeparts import Attachment, part_text, stored_parts
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -64,103 +45,16 @@ class ParsedMessage:
     Attributes:
         headers: The interesting headers.
         body: The body as plain text.
-        attachments: The decoded attachments.
+        attachments: The stored parts: the HTML body, if any, then the
+            attachments, then the inline parts.
+        unresolved_cids: ``cid:`` references in the HTML body that match no
+            part.
     """
 
     headers: Headers
     body: str
     attachments: Sequence[Attachment]
-
-
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class TextExtractor:
-    """Collects the visible text of an HTML document.
-
-    Construct it with :meth:`create` and feed it to :func:`html_to_text`.
-    """
-
-    _chunks: list[str]
-    _skipping: list[str]
-
-    @classmethod
-    def create(cls) -> "TextExtractor":
-        """Create an empty extractor.
-
-        Returns:
-            The extractor.
-        """
-        return cls(_chunks=[], _skipping=[])
-
-    def start(self, tag: str) -> None:
-        """Record an opening tag.
-
-        Args:
-            tag: The tag name.
-        """
-        if tag in _SKIPPED_TAGS:
-            self._skipping.append(tag)
-        if tag in _BLOCK_TAGS:
-            self._chunks.append("\n")
-
-    def end(self, tag: str) -> None:
-        """Record a closing tag.
-
-        Args:
-            tag: The tag name.
-        """
-        if self._skipping and self._skipping[-1] == tag:
-            self._skipping.pop()
-
-    def data(self, text: str) -> None:
-        """Record character data.
-
-        Args:
-            text: The text.
-        """
-        if not self._skipping:
-            self._chunks.append(text)
-
-    def text(self) -> str:
-        """Return the collected text with whitespace tidied.
-
-        Returns:
-            The text.
-        """
-        joined = "".join(self._chunks)
-        lines = (" ".join(line.split()) for line in joined.splitlines())
-        return "\n".join(line for line in lines if line)
-
-
-def html_to_text(markup: str) -> str:
-    """Convert HTML to readable plain text.
-
-    Args:
-        markup: The HTML.
-
-    Returns:
-        The visible text.
-    """
-    extractor = TextExtractor.create()
-    parser = html.parser.HTMLParser(convert_charrefs=True)
-    setattr(parser, "handle_starttag", lambda tag, attrs: extractor.start(tag))
-    setattr(parser, "handle_endtag", extractor.end)
-    setattr(parser, "handle_data", extractor.data)
-    parser.feed(markup)
-    parser.close()
-    return html.unescape(extractor.text())
-
-
-def sanitize_name(name: str) -> str:
-    """Make a file name safe to use as part of an S3 key.
-
-    Args:
-        name: The original file name.
-
-    Returns:
-        A name containing only letters, digits, dots, dashes and underscores.
-    """
-    cleaned = _UNSAFE_NAME.sub("_", name).strip("._")
-    return cleaned[:100] or "attachment"
+    unresolved_cids: Sequence[str] = ()
 
 
 def parse_date(value: str) -> int:
@@ -252,23 +146,6 @@ def read_headers(message: EmailMessage[str, str]) -> Headers:
     )
 
 
-def part_text(part: MIMEPart[str, str]) -> str:
-    """Decode a text part, even when it names a charset Python lacks.
-
-    Args:
-        part: The text part.
-
-    Returns:
-        The text; an unknown charset is decoded as UTF-8 with replacements.
-    """
-    try:
-        return str(part.get_content())
-    except LookupError:
-        payload = part.get_payload(decode=True)
-        data = payload if isinstance(payload, bytes) else b""
-        return data.decode("utf-8", errors="replace")
-
-
 def body_text(message: EmailMessage[str, str]) -> str:
     """Extract the body text, preferring text/plain over HTML.
 
@@ -287,28 +164,6 @@ def body_text(message: EmailMessage[str, str]) -> str:
     return content
 
 
-def read_attachments(message: EmailMessage[str, str]) -> Sequence[Attachment]:
-    """Decode every attachment in a message.
-
-    Args:
-        message: The message.
-
-    Returns:
-        The attachments, with unique sanitized names.
-    """
-    found = []
-    for index, part in enumerate(message.iter_attachments()):
-        payload = part.get_payload(decode=True)
-        data = payload if isinstance(payload, bytes) else b""
-        name = sanitize_name(part.get_filename() or f"part{index}")
-        found.append(
-            Attachment(
-                name=f"{index}-{name}", content_type=part.get_content_type(), data=data
-            )
-        )
-    return found
-
-
 def parse_message(raw: bytes) -> ParsedMessage:
     """Parse a raw message.
 
@@ -324,8 +179,10 @@ def parse_message(raw: bytes) -> ParsedMessage:
     message = email.message_from_bytes(raw, policy=email.policy.default)
     if not isinstance(message, EmailMessage):  # pragma: no cover
         raise TypeError("expected an EmailMessage")
+    attachments, unresolved = stored_parts(message)
     return ParsedMessage(
         headers=read_headers(message),
         body=body_text(message),
-        attachments=read_attachments(message),
+        attachments=attachments,
+        unresolved_cids=unresolved,
     )

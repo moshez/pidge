@@ -19,6 +19,10 @@ from ..store import PreconditionFailed
 from .checks import failure
 from .fakes import sample_raw
 
+ATTACHED = dict(
+    name="1-a.pdf", content_type="application/pdf", size=4, kind="attachment"
+)
+
 
 def new_message() -> NewMessage:
     """Build a message to store.
@@ -45,12 +49,12 @@ class TestRecords(unittest.TestCase):
         assert_that(write_message(self.store, "M1", new_message()), equal_to(False))
         assert_that(read_meta(self.store, "M1")[0].tags, contains_exactly("work"))
         stored = self.store.keys()
-        for key in ["msgs/M1/attachments/0-a.pdf", "dirty/M1"]:
+        for key in ["msgs/M1/attachments/1-a.pdf", "dirty/M1"]:
             assert_that(stored, has_item(key))
         headers = read_json(self.store, "msgs/M1/headers.json")
         assert_that(
             headers["attachments"],
-            equal_to([dict(name="0-a.pdf", content_type="application/pdf", size=4)]),
+            equal_to([ATTACHED]),
         )
 
     def test_read_json_missing(self) -> None:

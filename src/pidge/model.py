@@ -61,11 +61,14 @@ class Meta:
         tags: The message's tags, sorted.
         direction: Whether it was received or sent.
         status: Free-form delivery status (for sent mail).
+        unresolved_cids: ``cid:`` references in the stored HTML body that
+            match no part of the message.
     """
 
     tags: Sequence[str]
     direction: Direction
     status: str
+    unresolved_cids: Sequence[str] = ()
 
 
 def make_tags(tags: Iterable[str]) -> Sequence[str]:
@@ -89,13 +92,14 @@ def meta_json(meta: Meta) -> bytes:
     Returns:
         The JSON bytes.
     """
-    return jsonvalue.dumps(
-        dict(
-            tags=list(meta.tags),
-            direction=meta.direction.name.lower(),
-            status=meta.status,
-        )
+    record: dict[str, object] = dict(
+        tags=list(meta.tags),
+        direction=meta.direction.name.lower(),
+        status=meta.status,
     )
+    if meta.unresolved_cids:
+        record.update(unresolved_cids=list(meta.unresolved_cids))
+    return jsonvalue.dumps(record)
 
 
 def parse_meta(data: bytes) -> Meta:
@@ -112,4 +116,5 @@ def parse_meta(data: bytes) -> Meta:
         tags=make_tags(jsonvalue.string_list(parsed, "tags")),
         direction=Direction[jsonvalue.get_str(parsed, "direction", "in").upper()],
         status=jsonvalue.get_str(parsed, "status"),
+        unresolved_cids=tuple(sorted(jsonvalue.string_list(parsed, "unresolved_cids"))),
     )

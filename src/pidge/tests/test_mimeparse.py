@@ -5,7 +5,9 @@ from email.message import EmailMessage
 
 from hamcrest import assert_that, contains_exactly, contains_string, equal_to
 
-from ..mimeparse import html_to_text, parse_date, parse_message, sanitize_name
+from ..htmltext import html_to_text
+from ..mimeparse import parse_date, parse_message
+from ..mimeparts import sanitize_name
 from .fakes import sample_raw
 
 
@@ -22,7 +24,7 @@ class TestParse(unittest.TestCase):
         assert_that(headers.date, equal_to(1_767_225_600))
         assert_that(headers.message_id, equal_to("<original@example.com>"))
         assert_that(parsed.body, contains_string("Hello there"))
-        assert_that(parsed.attachments[0].name, equal_to("0-r_e_p.pdf"))
+        assert_that(parsed.attachments[0].name, equal_to("1-r_e_p.pdf"))
         assert_that(parsed.attachments[0].data, equal_to(b"%PDF"))
 
     def test_html_only(self) -> None:
@@ -44,7 +46,7 @@ class TestParse(unittest.TestCase):
         message.add_attachment(b"x", maintype="image", subtype="png")
         parsed = parse_message(message.as_bytes())
         assert_that(parsed.body, equal_to(""))
-        assert_that(parsed.attachments[0].name, equal_to("0-part0"))
+        assert_that(parsed.attachments[0].name, equal_to("1-part1"))
 
     def test_unknown_charset(self) -> None:
         """A body in a charset Python lacks is decoded rather than rejected."""

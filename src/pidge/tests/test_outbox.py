@@ -91,7 +91,7 @@ class TestOutbox(unittest.TestCase):
             subject="Lunch",
             body="Yes!",
             in_reply_to=self.original,
-            attachments=[AttachmentRef(message=self.original, name="0-m.pdf")],
+            attachments=[AttachmentRef(message=self.original, name="1-m.pdf")],
         )
         return enqueue(self.context, draft)
 
@@ -204,7 +204,7 @@ class TestOutboxEdges(unittest.TestCase):
         self.world.store.put(f"msgs/{self.original}/attachments/9-x.bin", b"X")
         refs = [
             AttachmentRef(message=self.original, name=name)
-            for name in ["1-b.pdf", "9-x.bin"]
+            for name in ["2-b.pdf", "9-x.bin"]
         ]
         draft = Draft(
             to=["a@example.com"],
