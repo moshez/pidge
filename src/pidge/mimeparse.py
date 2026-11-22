@@ -305,7 +305,7 @@ def parse_message(raw: bytes) -> ParsedMessage:
         TypeError: If the parser did not produce an EmailMessage.
     """
     message = email.message_from_bytes(raw, policy=email.policy.default)
-    if not isinstance(message, EmailMessage):
+    if not isinstance(message, EmailMessage):  # pragma: no cover
         raise TypeError("expected an EmailMessage")
     return ParsedMessage(
         headers=read_headers(message),

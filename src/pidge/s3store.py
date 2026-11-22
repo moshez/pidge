@@ -326,7 +326,7 @@ def iter_pages(
         Each response page.
     """
     extra: Mapping[str, object] = {}
-    for _ in itertools.count():
+    while True:
         page = client.list_objects_v2(
             Bucket=bucket, Prefix=prefix, MaxKeys=1000, **extra
         )

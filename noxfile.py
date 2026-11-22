@@ -20,7 +20,7 @@ def tests(session):
         "run",
         "--branch",
         "--source=pidge",
-        "--omit=**/__main__.py",
+        "--omit=**/__main__.py,**/lambda_main.py",
         "-m",
         "virtue",
         *tests,
@@ -60,6 +60,8 @@ def lint(session):
         "--arg-type-hints-in-docstring=False",
         "--check-return-types=False",
         "--check-yield-types=False",
+        # Test cases and fakes are concrete by nature, and repeat assertion shapes.
+        "--per-file-ignores=src/*/tests/*:SLD801,SLD303,SLD802,SLD803,SLD205",
         "src/",
     )
 

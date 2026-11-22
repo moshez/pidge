@@ -74,7 +74,7 @@ def handle_s3(app: App, event: Mapping[str, object]) -> object:
         parts = key.split("/")
         if key.startswith(INBOUND):
             ingest_or_record(context, key)
-        elif key.startswith(OUTBOX) and len(parts) == 3:
+        elif key.startswith(OUTBOX) and parts[-1] == "message.eml":
             activate(context, parts[1])
         handled.append(key)
     return handled

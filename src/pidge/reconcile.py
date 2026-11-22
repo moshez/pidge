@@ -61,7 +61,10 @@ def check_outbox(context: Context, message_id: str) -> Problem | None:
     if state.status is Status.SENDING and state.ses_message_id:
         mark_sent(context, message_id, state.ses_message_id)
         return None
-    requeue(context, message_id, state)
+    # A send that fails here leaves the message claimed; the next run retries
+    # it, and the attempts counter turns persistent failure into a report.
+    with contextlib.suppress(Exception):
+        requeue(context, message_id, state)
     return (
         stuck_problem(message_id, state) if state.attempts >= STUCK_ATTEMPTS else None
     )

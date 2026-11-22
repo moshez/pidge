@@ -218,7 +218,7 @@ def search_shard(
         else f"substr(fts.body, 1, {SNIPPET_CHARS})"
     )
     score = "bm25(fts)" if ranked else "NULL"
-    order = "bm25(fts)" if ranked else "m.date DESC"
+    order = "bm25(fts)" if ranked else "m.date DESC, m.id DESC"
     rows = connection.execute(
         f"SELECT m.id, m.date, m.from_addr, m.subject, {snippet}, m.tags, {score}"
         " FROM messages m JOIN fts ON fts.rowid = m.rowid"

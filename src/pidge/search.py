@@ -83,6 +83,18 @@ def query_shard(path: str, query: Query, exclude: Collection[str]) -> Sequence[H
         return search_shard(connection, query, exclude)
 
 
+def newest_first(hits: Iterable[Hit]) -> Sequence[Hit]:
+    """Sort hits by date, newest first; ties go to the newer ID.
+
+    Args:
+        hits: The hits.
+
+    Returns:
+        The sorted hits.
+    """
+    return sorted(hits, key=lambda hit: (hit.date, hit.ulid), reverse=True)
+
+
 def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[Hit]:
     """Combine index hits and tail hits.
 
@@ -96,10 +108,10 @@ def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[
         by date, without duplicates.
     """
     if query.terms:
-        first = sorted(ranked, key=lambda hit: hit.score or 0.0)
+        first: Sequence[Hit] = sorted(ranked, key=lambda hit: hit.score or 0.0)
     else:
-        first = sorted(ranked, key=lambda hit: -hit.date)
-    rest = sorted(tail, key=lambda hit: -hit.date)
+        first = newest_first(ranked)
+    rest = newest_first(tail)
     seen: set[str] = set()
     merged = []
     for hit in [*first, *rest]:
