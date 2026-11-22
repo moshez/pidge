@@ -10,6 +10,8 @@ name = "pidge"
 dynamic = ["version"]
 description = "Serverless mailbox with an MCP interface"
 readme = "README.rst"
+requires-python = ">=3.12"
+dependencies = ["boto3", "PyJWT[crypto]"]
 authors = [{name = "Moshe Zadka", email = "no-maintainer@example.org"}]
 
 [project.optional-dependencies]
@@ -48,5 +50,3 @@ log_command = "git log -n 1 --date=iso"
 is_main_var = "GITHUB_REF"
 is_main_match = ".*/trunk$"
 
-[project.entry-points.gather]
-placeholder = "pidge"
