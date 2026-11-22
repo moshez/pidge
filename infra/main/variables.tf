@@ -10,7 +10,7 @@ variable "mail_domain" {
 }
 
 variable "owner_email" {
-  description = "Your own address: the only Cognito user, and an SES-verified recipient while in the sandbox. Passed from a GitHub variable so it never lands in the repository."
+  description = "Your own address: the only Cognito user, an SES-verified recipient while in the sandbox, and where budget alerts go. Must be outside the mail domain. Passed from a GitHub variable so it never lands in the repository."
   type        = string
 }
 
@@ -69,11 +69,6 @@ variable "budget_limit_usd" {
   description = "Monthly cost budget in USD. Expected spend is about $0.30 a month."
   type        = string
   default     = "5"
-}
-
-variable "budget_alert_email" {
-  description = "Where budget alerts go. Must be outside the mail domain: alerts must not land in the mailbox they are about."
-  type        = string
 }
 
 variable "deploy_role_name" {

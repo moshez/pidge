@@ -29,7 +29,7 @@ resource "aws_budgets_budget" "monthly" {
     threshold                  = 50
     threshold_type             = "PERCENTAGE"
     notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.budget_alert_email]
+    subscriber_email_addresses = [var.owner_email]
   }
 
   notification {
@@ -37,7 +37,7 @@ resource "aws_budgets_budget" "monthly" {
     threshold                  = 100
     threshold_type             = "PERCENTAGE"
     notification_type          = "FORECASTED"
-    subscriber_email_addresses = [var.budget_alert_email]
+    subscriber_email_addresses = [var.owner_email]
   }
 
   notification {
@@ -45,14 +45,14 @@ resource "aws_budgets_budget" "monthly" {
     threshold                  = 100
     threshold_type             = "PERCENTAGE"
     notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.budget_alert_email]
+    subscriber_email_addresses = [var.owner_email]
     subscriber_sns_topic_arns  = [aws_sns_topic.killswitch.arn]
   }
 
   lifecycle {
     precondition {
-      condition     = !endswith(lower(var.budget_alert_email), "@${lower(var.mail_domain)}")
-      error_message = "budget_alert_email must be outside ${var.mail_domain}: alerts must not land in the mailbox they are about."
+      condition     = !endswith(lower(var.owner_email), "@${lower(var.mail_domain)}")
+      error_message = "owner_email must be outside ${var.mail_domain}: alerts must not land in the mailbox they are about."
     }
   }
 
@@ -186,7 +186,7 @@ resource "aws_budgets_budget_action" "backstop" {
   }
 
   subscriber {
-    address           = var.budget_alert_email
+    address           = var.owner_email
     subscription_type = "EMAIL"
   }
 

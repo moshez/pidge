@@ -6,7 +6,7 @@ $0.30):
 
 | Spend | What happens | Undo |
 |---|---|---|
-| 50% actual, 100% forecast | email to the budget alert address | nothing to undo |
+| 50% actual, 100% forecast | email to your address (`OWNER_EMAIL`) | nothing to undo |
 | 100% actual | **kill switch**: the function deactivates the SES receipt rule set and sets its own reserved concurrency to 0 | steps 2 and 3 |
 | 200% actual | **budget action**: `budget-deny-all` (Deny `*` on `*`) is attached to `pidge-lambda` and `pidge-deploy` | step 1 |
 

@@ -210,7 +210,6 @@ class Setup:
             "MAIL_DOMAIN": self.domain,
             "OWNER_EMAIL": self.email,
             "COGNITO_DOMAIN_PREFIX": self.args.cognito_prefix,
-            "BUDGET_ALERT_EMAIL": self.args.budget_email,
             "BUDGET_LIMIT_USD": self.args.budget_limit,
         }
         for name, value in values.items():
@@ -510,12 +509,10 @@ class Setup:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
-        "--email", required=True, help="your own address (the mailbox owner)"
-    )
-    parser.add_argument(
-        "--budget-email",
+        "--email",
         required=True,
-        help="where budget alerts go; must be outside the mail domain",
+        help="your own address, outside the mail domain: the mailbox owner, "
+        "and where budget alerts go",
     )
     parser.add_argument("--budget-limit", default="5", help="monthly budget in USD")
     parser.add_argument("--domain", default="ncolony.org")
@@ -527,8 +524,8 @@ def main() -> None:
         help="managed-login domain prefix (default pidge-<domain label>)",
     )
     args = parser.parse_args()
-    if args.budget_email.lower().endswith(f"@{args.domain.lower()}"):
-        parser.error("--budget-email must be outside the mail domain")
+    if args.email.lower().endswith(f"@{args.domain.lower()}"):
+        parser.error("--email must be outside the mail domain")
     if args.cognito_prefix is None:
         args.cognito_prefix = f"pidge-{args.domain.split('.')[0]}"
     Setup(args).all()
