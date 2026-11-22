@@ -179,12 +179,8 @@ def aws_credentials(region: str) -> None:
     os.environ["AWS_PROFILE"] = SETUP_PROFILE
     account = aws_works(SETUP_PROFILE, region)
     if not account:
-        has_region = subprocess.run(
-            ["aws", "configure", "get", "region", "--profile", login_profile],
-            capture_output=True,
-        )
-        if has_region.returncode:
-            run("aws", "configure", "set", "region", region, "--profile", login_profile)
+        if login_profile == LOGIN_PROFILE:
+            run("aws", "configure", "set", "region", region, "--profile", LOGIN_PROFILE)
         say("Signing in to AWS")
         print(
             "    A browser window opens. Sign in to the AWS console as the root\n"
