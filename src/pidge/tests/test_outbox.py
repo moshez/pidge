@@ -1,7 +1,7 @@
 """Tests for the outbound state machine and message composition."""
 
-import contextlib
 import unittest
+from collections.abc import Callable
 
 from hamcrest import (
     assert_that,
@@ -16,12 +16,14 @@ from ..outbox import (
     OutboxState,
     Status,
     activate,
+    claim,
     enqueue,
     finish,
     mark_sent,
     read_state,
     record_ses_id,
     requeue,
+    transition,
     unclaim,
 )
 from ..records import read_json
@@ -148,18 +150,39 @@ class TestOutbox(unittest.TestCase):
         assert_that(rejected.error, contains_string("not verified"))
         assert_tags(self.world, outbox_id, "rejected")
 
-    def test_requeue(self) -> None:
-        """A claimed message that SES never accepted is sent again."""
+    def assert_second_attempt_sends(self, retry: Callable[[], None]) -> None:
+        """Run a retry and check that it sent the only message, on attempt two.
+
+        Args:
+            retry: Retries the only queued message.
+        """
+        retry()
+        sent = self.world.sender.deliveries()
+        assert_that(len(sent), equal_to(1))
+        outbox_id = sent[0][1].tags["outbox_id"]
+        assert_that(self.state(outbox_id).attempts, equal_to(2))
+
+    def test_failed_send_releases_claim(self) -> None:
+        """A send that fails gives the claim back, so a retry sends at once."""
         self.world.sender.fail_with(OSError("network"))
         outbox_id = post(self.world, "Re: Hi")
-        with contextlib.suppress(OSError):
-            activate(self.context, outbox_id)
+        assert_that(
+            failure(lambda: activate(self.context, outbox_id)), instance_of(OSError)
+        )
+        released = self.state(outbox_id)
+        assert_that(released.status, equal_to(Status.QUEUED))
+        self.world.sender.recover()
+        self.assert_second_attempt_sends(lambda: activate(self.context, outbox_id))
+
+    def test_requeue(self) -> None:
+        """A claim left behind (the function died mid-send) is sent again."""
+        outbox_id = post(self.world, "Re: Hi")
+        transition(self.context, outbox_id, claim(self.world.clock.time()))
         stale = self.state(outbox_id)
         assert_that(stale.status, equal_to(Status.SENDING))
-        self.world.sender.recover()
-        requeue(self.context, outbox_id, stale)
-        assert_that(self.state(outbox_id).attempts, equal_to(2))
-        assert_that(len(self.world.sender.deliveries()), equal_to(1))
+        self.assert_second_attempt_sends(
+            lambda: requeue(self.context, outbox_id, stale)
+        )
 
     def test_replace_message_id_adds_header(self) -> None:
         """Rewriting a Message-ID adds one if the message had none."""

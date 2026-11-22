@@ -9,7 +9,7 @@ import html
 import html.parser
 import re
 from collections.abc import Sequence
-from email.message import EmailMessage
+from email.message import EmailMessage, MIMEPart
 from email.utils import formatdate, getaddresses, make_msgid, parsedate_to_datetime
 
 _SKIPPED_TAGS = frozenset({"script", "style", "head"})
@@ -252,6 +252,23 @@ def read_headers(message: EmailMessage[str, str]) -> Headers:
     )
 
 
+def part_text(part: MIMEPart[str, str]) -> str:
+    """Decode a text part, even when it names a charset Python lacks.
+
+    Args:
+        part: The text part.
+
+    Returns:
+        The text; an unknown charset is decoded as UTF-8 with replacements.
+    """
+    try:
+        return str(part.get_content())
+    except LookupError:
+        payload = part.get_payload(decode=True)
+        data = payload if isinstance(payload, bytes) else b""
+        return data.decode("utf-8", errors="replace")
+
+
 def body_text(message: EmailMessage[str, str]) -> str:
     """Extract the body text, preferring text/plain over HTML.
 
@@ -264,7 +281,7 @@ def body_text(message: EmailMessage[str, str]) -> str:
     part = message.get_body(preferencelist=("plain", "html"))
     if part is None:
         return ""
-    content = str(part.get_content())
+    content = part_text(part)
     if part.get_content_subtype() == "html":
         return html_to_text(content)
     return content

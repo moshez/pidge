@@ -51,7 +51,10 @@ def ok(text: str) -> None:
 
 
 def fail(text: str) -> None:
-    print(f"\n!!  {text}\n    Fix that and run this script again; it resumes.", file=sys.stderr)
+    print(
+        f"\n!!  {text}\n    Fix that and run this script again; it resumes.",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -171,7 +174,13 @@ class Setup:
     def bootstrap(self) -> dict[str, str]:
         say("Applying infra/bootstrap (state bucket, OIDC, deploy role, ECR)")
         repo_ids = json.loads(
-            run("gh", "api", f"repos/{self.repo}", "--jq", "{repo: .id, owner: .owner.id}")
+            run(
+                "gh",
+                "api",
+                f"repos/{self.repo}",
+                "--jq",
+                "{repo: .id, owner: .owner.id}",
+            )
         )
         owner, name = self.repo.split("/")
         stack = "-chdir=infra/bootstrap"
@@ -216,9 +225,9 @@ class Setup:
             else:
                 print("    Waiting for you to merge it on GitHub...")
             pr = wait_for(
-                lambda: (
-                    lambda p: p if p["state"] == "MERGED" else None
-                )(json.loads(self.gh("pr", "view", PR, "--json", "state,mergeCommit"))),
+                lambda: (lambda p: p if p["state"] == "MERGED" else None)(
+                    json.loads(self.gh("pr", "view", PR, "--json", "state,mergeCommit"))
+                ),
                 "the pull request to merge",
                 timeout=24 * 3600,
             )
@@ -229,8 +238,16 @@ class Setup:
     def latest_deploy(self, sha: str | None) -> dict | None:
         runs = json.loads(
             self.gh(
-                "run", "list", "--workflow", "deploy.yml", "--branch", "trunk",
-                "--limit", "10", "--json", "databaseId,status,conclusion,headSha,event",
+                "run",
+                "list",
+                "--workflow",
+                "deploy.yml",
+                "--branch",
+                "trunk",
+                "--limit",
+                "10",
+                "--json",
+                "databaseId,status,conclusion,headSha,event",
             )
         )
         for item in runs:
@@ -243,7 +260,9 @@ class Setup:
         if latest and latest["conclusion"] == "success":
             ok("the deploy for this commit already succeeded")
             return
-        found = wait_for(lambda: self.latest_deploy(sha), "the deploy run to start", 600)
+        found = wait_for(
+            lambda: self.latest_deploy(sha), "the deploy run to start", 600
+        )
         run_id = str(found["databaseId"])
         if found["status"] == "completed":
             print("    The last deploy failed; re-running it.")
@@ -251,7 +270,8 @@ class Setup:
             time.sleep(5)
         print(f"    Watching https://github.com/{self.repo}/actions/runs/{run_id}")
         result = subprocess.run(
-            ["gh", "run", "watch", run_id, "--exit-status", "--repo", self.repo], cwd=ROOT
+            ["gh", "run", "watch", run_id, "--exit-status", "--repo", self.repo],
+            cwd=ROOT,
         )
         if result.returncode != 0:
             self.gh("run", "view", run_id, "--log-failed", quiet=False)
@@ -285,8 +305,8 @@ class Setup:
 
         if status() != "Success":
             print(
-                f"    SES emailed {self.email} a link (\"Amazon Web Services - Email "
-                "Address Verification Request\"). Click it; this waits until you do."
+                f'    SES emailed {self.email} a link ("Amazon Web Services - Email '
+                'Address Verification Request"). Click it; this waits until you do.'
             )
             resent = time.time()
 
@@ -330,8 +350,10 @@ class Setup:
                 "EventBridge, and bounced messages are tagged and surfaced to the owner."
             ),
         )
-        ok("requested (AWS aims to review within 24 hours; until then mail only "
-           "reaches verified addresses)")
+        ok(
+            "requested (AWS aims to review within 24 hours; until then mail only "
+            "reaches verified addresses)"
+        )
 
     def round_trip(self) -> None:
         say("Sending a message to the mailbox and checking it end to end")
@@ -345,7 +367,9 @@ class Setup:
             Content={
                 "Simple": {
                     "Subject": {"Data": f"Pidge setup check {marker}"},
-                    "Body": {"Text": {"Data": "Sent by infra/setup.py. Safe to ignore."}},
+                    "Body": {
+                        "Text": {"Data": "Sent by infra/setup.py. Safe to ignore."}
+                    },
                 }
             },
         )["MessageId"]
@@ -358,7 +382,9 @@ class Setup:
                 head = self.s3.get_object(
                     Bucket=bucket, Key=item["Key"], Range="bytes=0-65535"
                 )["Body"].read()
-                headers = email.parser.BytesHeaderParser(policy=email.policy.default).parsebytes(head)
+                headers = email.parser.BytesHeaderParser(
+                    policy=email.policy.default
+                ).parsebytes(head)
                 if marker in str(headers.get("Subject", "")):
                     return item["Key"], str(headers.get("Message-ID", ""))
             return None
@@ -370,7 +396,9 @@ class Setup:
         if local != sent:
             print(f"    note: Message-ID {message_id} does not carry the SES ID {sent}")
         if domain and domain != env["MESSAGE_ID_DOMAIN"]:
-            print(f"    SES uses @{domain} for Message-IDs here; updating and redeploying.")
+            print(
+                f"    SES uses @{domain} for Message-IDs here; updating and redeploying."
+            )
             self.gh("variable", "set", "MESSAGE_ID_DOMAIN", "--body", domain)
             self.redeploy()
         else:
@@ -380,11 +408,15 @@ class Setup:
 
         def ingested() -> str | None:
             try:
-                body = self.s3.get_object(Bucket=bucket, Key=f"inbound-seen/{ses_id}")["Body"]
+                body = self.s3.get_object(Bucket=bucket, Key=f"inbound-seen/{ses_id}")[
+                    "Body"
+                ]
             except self.s3.exceptions.NoSuchKey:
                 return None
             ulid = body.read().decode().strip()
-            listed = self.s3.list_objects_v2(Bucket=bucket, Prefix=f"msgs/{ulid}/raw.eml")
+            listed = self.s3.list_objects_v2(
+                Bucket=bucket, Prefix=f"msgs/{ulid}/raw.eml"
+            )
             return ulid if listed.get("KeyCount") else None
 
         ulid = wait_for(ingested, "the message to be ingested", 300, every=5)
@@ -427,7 +459,9 @@ class Setup:
         url = self.lam.get_function_url_config(FunctionName=FUNCTION)["FunctionUrl"]
         mcp = f"{url.rstrip('/')}/mcp"
         clients = self.dcr_clients(pool_id)
-        if clients and all(USER_AUTH in c.get("ExplicitAuthFlows", []) for c in clients):
+        if clients and all(
+            USER_AUTH in c.get("ExplicitAuthFlows", []) for c in clients
+        ):
             ok(f"{len(clients)} client(s) already registered and allowed email codes")
             print(f"    MCP URL: {mcp}")
             return
@@ -437,9 +471,15 @@ class Setup:
             "    click Add, then Connect. Close the sign-in page that opens; this waits\n"
             "    for the client to register."
         )
-        known = {c["ClientId"] for c in clients if USER_AUTH in c.get("ExplicitAuthFlows", [])}
+        known = {
+            c["ClientId"]
+            for c in clients
+            if USER_AUTH in c.get("ExplicitAuthFlows", [])
+        }
         wait_for(
-            lambda: [c for c in self.dcr_clients(pool_id) if c["ClientId"] not in known],
+            lambda: [
+                c for c in self.dcr_clients(pool_id) if c["ClientId"] not in known
+            ],
             "your MCP client to register",
             timeout=3600,
             every=5,
@@ -447,7 +487,7 @@ class Setup:
         allow_email_codes(self.cognito, pool_id)
         print(
             f"    Now click Connect again and sign in as {self.email} with the code\n"
-            "    emailed to you (\"Pidge sign-in\"). You should see six tools."
+            '    emailed to you ("Pidge sign-in"). You should see six tools.'
         )
 
     def all(self) -> None:
@@ -467,12 +507,17 @@ class Setup:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--email", required=True, help="your own address (the mailbox owner)")
+    parser.add_argument(
+        "--email", required=True, help="your own address (the mailbox owner)"
+    )
     parser.add_argument("--domain", default="ncolony.org")
     parser.add_argument("--region", default="us-west-2")
     parser.add_argument("--repo", default="moshez/pidge")
-    parser.add_argument("--cognito-prefix", default=None,
-                        help="managed-login domain prefix (default pidge-<domain label>)")
+    parser.add_argument(
+        "--cognito-prefix",
+        default=None,
+        help="managed-login domain prefix (default pidge-<domain label>)",
+    )
     args = parser.parse_args()
     if args.cognito_prefix is None:
         args.cognito_prefix = f"pidge-{args.domain.split('.')[0]}"

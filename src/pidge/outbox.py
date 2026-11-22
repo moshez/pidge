@@ -295,6 +295,9 @@ def activate(context: Context, message_id: str) -> None:
     Args:
         context: The flow context.
         message_id: The ULID.
+
+    Raises:
+        Exception: A failed send, after releasing the claim for Lambda's retry.
     """
     claimed = transition(context, message_id, claim(context.clock()))
     if claimed is None:
@@ -306,6 +309,9 @@ def activate(context: Context, message_id: str) -> None:
     except SendRejected as error:
         reject(context, message_id, str(error))
         return
+    except Exception:
+        release(context, message_id, claimed)
+        raise
     transition(context, message_id, record_ses_id(ses_message_id))
 
 
@@ -370,6 +376,17 @@ def unclaim(updated: float, now: float) -> Change:
     return change
 
 
+def release(context: Context, message_id: str, claimed: OutboxState) -> None:
+    """Return a claimed message to the queue, unless it moved on meanwhile.
+
+    Args:
+        context: The flow context.
+        message_id: The ULID.
+        claimed: The claimed state.
+    """
+    transition(context, message_id, unclaim(claimed.updated, context.clock()))
+
+
 def requeue(context: Context, message_id: str, state: OutboxState) -> None:
     """Retry a stale message: queue it again if it was claimed, then send.
 
@@ -379,5 +396,5 @@ def requeue(context: Context, message_id: str, state: OutboxState) -> None:
         state: The stale state the reconciler saw.
     """
     if state.status is Status.SENDING:
-        transition(context, message_id, unclaim(state.updated, context.clock()))
+        release(context, message_id, state)
     activate(context, message_id)

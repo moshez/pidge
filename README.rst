@@ -27,10 +27,17 @@ Layout
     One-time stack: state bucket, GitHub OIDC deploy role, ECR repository.
 ``infra/main/``
     Everything else: S3, Lambda, SES, EventBridge, Cognito, Cloudflare DNS.
+``e2e/``
+    End-to-end tests: the built image against moto, with S3 notifications,
+    Lambda retries, SES events, injected AWS errors and a movable clock.
+``infra/setup.py``
+    The one-time setup script.
 ``infra/scripts/``
     Cognito helpers for settings the AWS provider cannot manage yet.
+``.github/workflows/image.yml``
+    Builds the image and runs the smoke and end-to-end tests on every push.
 ``.github/workflows/deploy.yml``
-    Builds the image and applies the main stack on every push to ``trunk``.
+    Pushes that tested image and applies the main stack on every push to ``trunk``.
 
 Setup
 -----
@@ -44,3 +51,5 @@ Development
 
     pip install nox
     nox            # tests (100% branch coverage), lint, mypy, docs
+    nox -s build && docker buildx build --platform linux/amd64 --load -t pidge:candidate .
+    nox -s e2e     # the image against moto (needs Docker)

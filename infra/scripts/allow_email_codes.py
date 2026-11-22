@@ -46,7 +46,9 @@ def allow_email_codes(client, pool_id: str) -> list[str]:
             request = {k: v for k, v in described.items() if k in accepted}
             request["ExplicitAuthFlows"] = [*flows, USER_AUTH]
             client.update_user_pool_client(**request)
-            print(f"Allowed email codes for {summary['ClientName']} ({summary['ClientId']})")
+            print(
+                f"Allowed email codes for {summary['ClientName']} ({summary['ClientId']})"
+            )
             changed.append(summary["ClientName"])
     return changed
 

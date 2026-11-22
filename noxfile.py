@@ -44,8 +44,18 @@ def build(session):
 
 
 @nox.session(python=VERSIONS[-1])
+def e2e(session):
+    """Run the end-to-end tests against a built image (needs Docker).
+
+    PIDGE_IMAGE names the image (default pidge:candidate).
+    """
+    session.install("-r", "requirements-tests.txt", "libfaketime==3.0.1")
+    session.run("python", "-m", "virtue", *(session.posargs or ["e2e"]))
+
+
+@nox.session(python=VERSIONS[-1])
 def lint(session):
-    files = ["src/", "noxfile.py"]
+    files = ["src/", "e2e/", "noxfile.py"]
     session.install("-r", "requirements-lint.txt")
     session.install("-e", ".")
     session.run("black", "--check", "--diff", *files)

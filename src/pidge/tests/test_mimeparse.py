@@ -46,6 +46,11 @@ class TestParse(unittest.TestCase):
         assert_that(parsed.body, equal_to(""))
         assert_that(parsed.attachments[0].name, equal_to("0-part0"))
 
+    def test_unknown_charset(self) -> None:
+        """A body in a charset Python lacks is decoded rather than rejected."""
+        raw = b"Content-Type: text/plain; charset=x-unknown\r\n\r\nhello \xe9"
+        assert_that(parse_message(raw).body, equal_to("hello \ufffd"))
+
     def test_edge_values(self) -> None:
         """Small helpers behave at the edges."""
         assert_that(sanitize_name("..."), equal_to("attachment"))
