@@ -39,6 +39,9 @@ jobs:
         run: |
           nox --force-color --python=${{ matrix.python }} --session=${{ matrix.check }}
 
+  image:
+    uses: ./.github/workflows/image.yml
+
   infra:
     name: OpenTofu fmt and validate
     runs-on: ubuntu-latest
