@@ -647,10 +647,15 @@ class Setup:
 
     def deploy(self) -> None:
         say(f"Merging pull request #{PR} and waiting for the deploy")
-        pr = json.loads(self.gh("pr", "view", PR, "--json", "state,mergeCommit"))
+        pr = json.loads(
+            self.gh("pr", "view", PR, "--json", "state,mergeCommit,isDraft")
+        )
         if pr["state"] == "OPEN":
             answer = input(f"    Merge pull request #{PR} now? [y/N] ").strip().lower()
             if answer == "y":
+                if pr["isDraft"]:
+                    self.gh("pr", "ready", PR)
+                    ok(f"marked pull request #{PR} ready for review")
                 self.gh("pr", "merge", PR, "--merge", quiet=False)
             else:
                 print("    Waiting for you to merge it on GitHub...")
@@ -660,7 +665,8 @@ class Setup:
                 ),
                 "the pull request to merge",
                 timeout=24 * 3600,
-                remedy=f"Merge it: gh pr merge {PR} --merge --repo {self.repo}",
+                remedy=f"Merge it: gh pr ready {PR} --repo {self.repo} && "
+                f"gh pr merge {PR} --merge --repo {self.repo}",
             )
         elif pr["state"] != "MERGED":
             if not confirm(f"Pull request #{PR} is closed. Reopen it?"):
