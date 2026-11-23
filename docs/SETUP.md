@@ -14,8 +14,8 @@ For each one that's missing it shows how to install it and offers to do it
 for you, with Homebrew if you have it, or else by downloading the official
 release into `~/.local/bin`. If `gh` isn't signed in, it offers to run
 `gh auth login`. Your address is passed on the
-command line and stored as a GitHub variable, so it never lands in this
-public repository. It must be outside the mail domain: cost alerts go there
+command line and stored as a GitHub secret, so it never lands in this
+public repository or its logs. It must be outside the mail domain: cost alerts go there
 too, and they must not land in the mailbox they are about.
 
 Every step checks what already exists before doing anything, so if the
@@ -54,8 +54,9 @@ uses them. Otherwise it signs you in with `aws login`:
    provider, the deploy role (trusting only `trunk` of this repository, by
    immutable IDs it looks up), and the ECR repository.
 4. Sets the repository variables `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`,
-   `MAIL_DOMAIN`, `OWNER_EMAIL`, `COGNITO_DOMAIN_PREFIX`,
-   `BUDGET_LIMIT_USD`.
+   `MAIL_DOMAIN`, `COGNITO_DOMAIN_PREFIX`, `BUDGET_LIMIT_USD`, and stores your
+   address as the `OWNER_EMAIL` secret (secrets are masked in the public
+   Actions logs; variables are not).
 5. Offers to merge the pull request (or waits while you merge it), then
    follows the deploy run to the end.
 6. Waits for you to click the SES verification link sent to your address.

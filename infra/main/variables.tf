@@ -10,8 +10,10 @@ variable "mail_domain" {
 }
 
 variable "owner_email" {
-  description = "Your own address: the only Cognito user, an SES-verified recipient while in the sandbox, and where budget alerts go. Must be outside the mail domain. Passed from a GitHub variable so it never lands in the repository."
+  description = "Your own address: the only Cognito user, an SES-verified recipient while in the sandbox, and where budget alerts go. Must be outside the mail domain. Passed from a GitHub secret so it never lands in the repository or its logs."
   type        = string
+  # Personal data in a public repository's Actions logs: keep it out of plans.
+  sensitive = true
 }
 
 variable "image_uri" {

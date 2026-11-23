@@ -1,7 +1,9 @@
 """Finish a deploy: request SES production access, then check mail end to end.
 
 Run by the deploy workflow after the main stack is applied, with the deploy
-role's credentials. Environment: AWS_REGION, MAIL_DOMAIN, OWNER_EMAIL.
+role's credentials. Environment: AWS_REGION, MAIL_DOMAIN. The owner's
+address comes from the function's configuration, so it never appears in the
+(public) Actions log.
 
 1. Files the SES production access request if it isn't filed yet.
 2. Once per mailbox, sends a message to setup-check@<domain> and waits until
@@ -176,14 +178,10 @@ def main() -> None:
     region = os.environ["AWS_REGION"]
     domain = os.environ["MAIL_DOMAIN"]
     sesv2 = boto3.client("sesv2", region_name=region)
-    production_access(sesv2, domain, os.environ["OWNER_EMAIL"])
-    round_trip(
-        sesv2,
-        boto3.client("s3", region_name=region),
-        boto3.client("lambda", region_name=region),
-        domain,
-        region,
-    )
+    lam = boto3.client("lambda", region_name=region)
+    env = lam.get_function_configuration(FunctionName=FUNCTION)["Environment"]
+    production_access(sesv2, domain, env["Variables"]["OWNER_ADDRESS"])
+    round_trip(sesv2, boto3.client("s3", region_name=region), lam, domain, region)
 
 
 if __name__ == "__main__":
