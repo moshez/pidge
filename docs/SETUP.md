@@ -7,8 +7,12 @@ pip install boto3
 python3 infra/setup.py --email you@example.net
 ```
 
-Run it from the repository root, with the GitHub CLI signed in (`gh auth
-status`) and OpenTofu 1.10 or later installed. Your address is passed on the
+Run it from the repository root. Before anything else it checks for what it
+needs: boto3, OpenTofu, the GitHub CLI (signed in) and AWS CLI 2.32 or later.
+For each one that's missing it shows how to install it and offers to do it
+for you, with Homebrew if you have it, or else by downloading the official
+release into `~/.local/bin`. If `gh` isn't signed in, it offers to run
+`gh auth login`. Your address is passed on the
 command line and stored as a GitHub variable, so it never lands in this
 public repository. It must be outside the mail domain: cost alerts go there
 too, and they must not land in the mailbox they are about.

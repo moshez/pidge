@@ -2,10 +2,10 @@
 
     python3 infra/setup.py --email you@example.net
 
-Run it from the repository root, signed in to the GitHub CLI. It needs
-OpenTofu, boto3 and AWS CLI 2.32 or later (installed with Homebrew if it is
-missing). If there are no usable AWS credentials, it runs `aws login`, which
-opens a browser: sign in to the AWS console as the root user or an
+Run it from the repository root. It first checks for everything it needs
+(boto3, OpenTofu, the GitHub CLI signed in, AWS CLI 2.32 or later) and offers
+to install whatever is missing. If there are no usable AWS credentials, it
+runs `aws login`: sign in to the AWS console as the root user or an
 administrator. Every step checks what already exists first, so re-running it
 after a failure picks up where it stopped.
 
@@ -19,19 +19,31 @@ import email.parser
 import email.policy
 import getpass
 import json
+import io
 import os
 import pathlib
+import platform
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 
-import boto3
-import botocore.exceptions
-import botocore.session
+try:
+    import boto3
+    import botocore.exceptions
+    import botocore.session
+except ImportError:
+    print("\n==> Checking tools\n    boto3 is not installed for this Python.")
+    if input("    Install it now with pip? [Y/n] ").strip().lower() in ("", "y", "yes"):
+        subprocess.run([sys.executable, "-m", "pip", "install", "boto3"], check=True)
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+    sys.exit(f"Install it with: {sys.executable} -m pip install boto3")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "infra" / "scripts"))
@@ -119,22 +131,160 @@ def aws_cli_version() -> tuple[int, ...] | None:
         return None
 
 
-def ensure_aws_cli() -> None:
-    """Make sure an AWS CLI with `aws login` (2.32+) is on PATH."""
-    version = aws_cli_version()
-    if version and version >= MIN_AWS_CLI:
+# -- Tools ---------------------------------------------------------------------
+
+BIN = pathlib.Path.home() / ".local" / "bin"
+AWS_CLI_DIR = pathlib.Path.home() / ".local" / "aws-cli"
+
+
+def confirm(question: str) -> bool:
+    return input(f"    {question} [Y/n] ").strip().lower() in ("", "y", "yes")
+
+
+def arch() -> str:
+    machine = platform.machine().lower()
+    return "arm64" if machine in ("arm64", "aarch64") else "amd64"
+
+
+def download(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=300) as response:
+        return response.read()
+
+
+def latest_release(repo: str) -> str:
+    """The latest release's version, from GitHub's /releases/latest redirect."""
+    with urllib.request.urlopen(
+        f"https://github.com/{repo}/releases/latest", timeout=30
+    ) as response:
+        return response.geturl().rstrip("/").rsplit("/", 1)[-1].lstrip("v")
+
+
+def place(data: bytes, name: str) -> None:
+    BIN.mkdir(parents=True, exist_ok=True)
+    target = BIN / name
+    target.write_bytes(data)
+    target.chmod(0o755)
+
+
+def install_tofu() -> None:
+    if shutil.which("brew"):
+        run("brew", "install", "opentofu", quiet=False)
         return
-    found = ".".join(map(str, version)) if version else "none"
-    if not shutil.which("brew"):
-        fail(f"AWS CLI 2.32 or later is needed (found {found}). See {AWS_CLI_INSTALL}")
-    say(f"Installing AWS CLI 2.32 or later with Homebrew (found {found})")
-    subprocess.run(["brew", "upgrade" if version else "install", "awscli"])
-    if (aws_cli_version() or ()) < MIN_AWS_CLI:
-        subprocess.run(["brew", "install", "awscli"])
-    if (aws_cli_version() or ()) < MIN_AWS_CLI:
-        fail(
-            f"`aws --version` is still older than 2.32 ({shutil.which('aws')}). "
-            f"Put Homebrew's aws first on PATH, or see {AWS_CLI_INSTALL}"
+    version = latest_release("opentofu/opentofu")
+    system = "darwin" if sys.platform == "darwin" else "linux"
+    url = (
+        "https://github.com/opentofu/opentofu/releases/download/"
+        f"v{version}/tofu_{version}_{system}_{arch()}.zip"
+    )
+    print(f"    downloading {url}", flush=True)
+    with zipfile.ZipFile(io.BytesIO(download(url))) as archive:
+        place(archive.read("tofu"), "tofu")
+
+
+def install_gh() -> None:
+    if shutil.which("brew"):
+        run("brew", "install", "gh", quiet=False)
+        return
+    if sys.platform == "darwin":
+        fail("Install the GitHub CLI: https://github.com/cli/cli#installation")
+    version = latest_release("cli/cli")
+    url = (
+        "https://github.com/cli/cli/releases/download/"
+        f"v{version}/gh_{version}_linux_{arch()}.tar.gz"
+    )
+    print(f"    downloading {url}", flush=True)
+    with tarfile.open(fileobj=io.BytesIO(download(url))) as archive:
+        member = next(m for m in archive.getmembers() if m.name.endswith("/bin/gh"))
+        extracted = archive.extractfile(member)
+        assert extracted is not None
+        place(extracted.read(), "gh")
+
+
+def install_aws() -> None:
+    if shutil.which("brew"):
+        installed = aws_cli_version() is not None
+        run("brew", "upgrade" if installed else "install", "awscli", quiet=False)
+        return
+    if sys.platform == "darwin":
+        fail(f"Install AWS CLI 2.32 or later: {AWS_CLI_INSTALL}")
+    machine = "aarch64" if arch() == "arm64" else "x86_64"
+    url = f"https://awscli.amazonaws.com/awscli-exe-linux-{machine}.zip"
+    print(f"    downloading {url}", flush=True)
+    with tempfile.TemporaryDirectory() as scratch:
+        zipfile.ZipFile(io.BytesIO(download(url))).extractall(scratch)
+        installer = pathlib.Path(scratch) / "aws" / "install"
+        for path in installer.parent.rglob("*"):
+            if path.is_file():
+                path.chmod(0o755)
+        command = [str(installer), "-i", str(AWS_CLI_DIR), "-b", str(BIN)]
+        if AWS_CLI_DIR.exists():
+            command.append("--update")
+        run(*command, quiet=False)
+
+
+def aws_cli_ok() -> bool:
+    return (aws_cli_version() or ()) >= MIN_AWS_CLI
+
+
+TOOLS = (
+    (
+        "OpenTofu (tofu)",
+        lambda: bool(shutil.which("tofu")),
+        install_tofu,
+        "brew install opentofu, or https://opentofu.org/docs/intro/install/",
+    ),
+    (
+        "GitHub CLI (gh)",
+        lambda: bool(shutil.which("gh")),
+        install_gh,
+        "brew install gh, or https://github.com/cli/cli#installation",
+    ),
+    (
+        "AWS CLI 2.32 or later (aws)",
+        aws_cli_ok,
+        install_aws,
+        f"brew install awscli, or {AWS_CLI_INSTALL}",
+    ),
+)
+
+
+def check_tools() -> None:
+    """Check every tool before doing anything, offering to install what's missing."""
+    say("Checking tools")
+    original_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{BIN}{os.pathsep}{original_path}"
+    for name, present, install, remedy in TOOLS:
+        if present():
+            ok(name)
+            continue
+        print(f"    missing: {name}. To install it yourself: {remedy}", flush=True)
+        where = "with Homebrew" if shutil.which("brew") else f"into {BIN}"
+        if not confirm(f"Install it now {where}?"):
+            fail(f"{name} is needed. Install it: {remedy}")
+        try:
+            install()
+        except (
+            OSError,
+            KeyError,
+            StopIteration,
+            zipfile.BadZipFile,
+            tarfile.TarError,
+        ) as error:
+            fail(f"Installing {name} failed ({error}). Install it yourself: {remedy}")
+        if not present():
+            fail(f"Installing {name} did not work. Install it yourself: {remedy}")
+        ok(f"{name} installed")
+    if subprocess.run(["gh", "auth", "status"], capture_output=True).returncode:
+        print("    The GitHub CLI is not signed in.", flush=True)
+        if not confirm("Sign in now (gh auth login)?"):
+            fail("Sign in to GitHub: gh auth login")
+        if subprocess.run(["gh", "auth", "login"]).returncode:
+            fail("`gh auth login` did not finish. Run it yourself, then rerun this.")
+    ok("GitHub CLI signed in")
+    installed_here = [t for t in ("tofu", "gh", "aws") if (BIN / t).exists()]
+    if installed_here and str(BIN) not in original_path.split(os.pathsep):
+        print(
+            f"    note: {', '.join(installed_here)} are in {BIN}; add it to your PATH."
         )
 
 
@@ -167,7 +317,6 @@ def aws_credentials(region: str) -> None:
             ok(f"using your existing credentials (account {account})")
             return
     login_profile = current if scoped.get("login_session") else LOGIN_PROFILE
-    ensure_aws_cli()
     process = (
         f"aws configure export-credentials --profile {login_profile} --format process"
     )
@@ -244,13 +393,8 @@ class Setup:
 
     # -- Steps ----------------------------------------------------------------
 
-    def check_tools(self) -> None:
-        say("Checking tools")
-        for tool in ("gh", "tofu"):
-            if not shutil.which(tool):
-                fail(f"`{tool}` is not on PATH.")
-        run("gh", "auth", "status")
-        ok(f"AWS account {self.account}, region {self.region}, GitHub signed in")
+    def show_account(self) -> None:
+        say(f"AWS account {self.account}, region {self.region}")
 
     def check_rule_set(self) -> None:
         say("Checking for another active SES receipt rule set")
@@ -660,7 +804,7 @@ class Setup:
         )
 
     def all(self) -> None:
-        self.check_tools()
+        self.show_account()
         self.check_rule_set()
         self.cloudflare_token()
         self.variables(self.bootstrap())
@@ -696,6 +840,7 @@ def main() -> None:
         parser.error("--email must be outside the mail domain")
     if args.cognito_prefix is None:
         args.cognito_prefix = f"pidge-{args.domain.split('.')[0]}"
+    check_tools()
     aws_credentials(args.region)
     Setup(args).all()
 
