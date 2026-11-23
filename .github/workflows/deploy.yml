@@ -79,8 +79,13 @@ jobs:
           echo "repository_url=$REPOSITORY_URL" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Install boto3 (the Cognito DCR script needs it)
-        run: python3 -m pip install --user boto3
+      - name: Set up Python (the Cognito DCR script needs a current boto3)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install boto3
+        run: python3 -m pip install --upgrade boto3
 
       - name: Set up OpenTofu
         uses: opentofu/setup-opentofu@v1
