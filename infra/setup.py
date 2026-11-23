@@ -3,7 +3,7 @@
     python3 infra/setup.py --email you@example.net
 
 Run it from the repository root. It first checks for everything it needs
-(boto3, OpenTofu, the GitHub CLI signed in, AWS CLI 2.32 or later) and offers
+(a current boto3, OpenTofu 1.10+, GitHub CLI 2.60+ signed in, AWS CLI 2.32+) and offers
 to install whatever is missing. If there are no usable AWS credentials, it
 runs `aws login`: sign in to the AWS console as the root user or an
 administrator. Every step checks what already exists first, so re-running it
@@ -46,6 +46,23 @@ except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "boto3"], check=True)
         os.execv(sys.executable, [sys.executable, *sys.argv])
     sys.exit(f"Install it with: {sys.executable} -m pip install boto3")
+
+if "DcrConfiguration" not in (
+    botocore.session.get_session()
+    .get_service_model("cognito-idp")
+    .operation_model("UpdateUserPool")
+    .input_shape.members
+):
+    print(
+        "\n==> Checking tools\n    This boto3 is too old to turn on Cognito "
+        "dynamic client registration."
+    )
+    if input("    Upgrade it now with pip? [Y/n] ").strip().lower() in ("", "y", "yes"):
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "boto3"], check=True
+        )
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+    sys.exit(f"Upgrade it with: {sys.executable} -m pip install --upgrade boto3")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "infra" / "scripts"))
@@ -700,22 +717,24 @@ class Setup:
         return None
 
     def watch_deploy(self, sha: str | None) -> None:
-        latest = self.latest_deploy(sha)
-        if latest and latest["conclusion"] == "success":
-            ok("the deploy for this commit already succeeded")
-            return
-        found = wait_for(
+        wait_for(
             lambda: self.latest_deploy(sha),
             "the deploy run to start",
             600,
             remedy="Start it: gh workflow run deploy.yml --ref trunk "
             f"--repo {self.repo}",
         )
-        run_id = str(found["databaseId"])
-        if found["status"] == "completed":
-            print("    The last deploy failed; re-running it.")
-            self.gh("run", "rerun", run_id)
-            time.sleep(5)
+        # The newest run on trunk may be a later fix; it supersedes this one.
+        newest = self.latest_deploy(None)
+        assert newest is not None
+        if newest["status"] == "completed":
+            if newest["conclusion"] == "success":
+                ok("the latest deploy succeeded")
+                return
+            print("    The last deploy failed; deploying the current trunk again.")
+            self.redeploy()
+            return
+        run_id = str(newest["databaseId"])
         print(f"    Watching https://github.com/{self.repo}/actions/runs/{run_id}")
         result = subprocess.run(
             ["gh", "run", "watch", run_id, "--exit-status", "--repo", self.repo],
@@ -725,9 +744,10 @@ class Setup:
             self.gh("run", "view", run_id, "--log-failed", quiet=False)
             fail(
                 "The deploy failed; the failed step's log is printed above.",
-                f"Read the log (also at https://github.com/{self.repo}/actions/runs/"
-                f"{run_id}). If it is a transient AWS error, just rerun; the script "
-                "re-runs the deploy. Otherwise paste the log to Claude.",
+                f"If it is a transient AWS error, rerun this script and it deploys "
+                f"again. Otherwise the fix goes into the repository; rerun this "
+                f"script once it is on trunk (log: https://github.com/{self.repo}/"
+                f"actions/runs/{run_id}).",
             )
         ok("deployed")
 
