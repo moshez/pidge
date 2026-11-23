@@ -3,7 +3,7 @@
     python3 infra/setup.py --email you@example.net
 
 Run it from the repository root. It first checks for everything it needs
-(a current boto3, OpenTofu 1.10+, GitHub CLI 2.60+ signed in, AWS CLI 2.32+) and offers
+(boto3, OpenTofu 1.10+, GitHub CLI 2.60+ signed in, AWS CLI 2.32+) and offers
 to install whatever is missing. If there are no usable AWS credentials, it
 runs `aws login`: sign in to the AWS console as the root user or an
 administrator. Every step checks what already exists first, so re-running it
@@ -15,8 +15,6 @@ pull request (or say yes and it merges), and connect your MCP client.
 """
 
 import argparse
-import email.parser
-import email.policy
 import getpass
 import json
 import io
@@ -32,7 +30,6 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
-import uuid
 import zipfile
 from typing import NoReturn
 
@@ -47,32 +44,11 @@ except ImportError:
         os.execv(sys.executable, [sys.executable, *sys.argv])
     sys.exit(f"Install it with: {sys.executable} -m pip install boto3")
 
-if "DcrConfiguration" not in (
-    botocore.session.get_session()
-    .get_service_model("cognito-idp")
-    .operation_model("UpdateUserPool")
-    .input_shape.members
-):
-    print(
-        "\n==> Checking tools\n    This boto3 is too old to turn on Cognito "
-        "dynamic client registration."
-    )
-    if input("    Upgrade it now with pip? [Y/n] ").strip().lower() in ("", "y", "yes"):
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "boto3"], check=True
-        )
-        os.execv(sys.executable, [sys.executable, *sys.argv])
-    sys.exit(f"Upgrade it with: {sys.executable} -m pip install --upgrade boto3")
-
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "infra" / "scripts"))
 
-from allow_email_codes import USER_AUTH, allow_email_codes  # noqa: E402
-from enable_dcr import enable_dcr  # noqa: E402
 
 RULE_SET = "pidge"
 FUNCTION = "pidge"
-POOL = "pidge"
 PR = "1"
 LOGIN_PROFILE = "pidge-login"
 SETUP_PROFILE = "pidge-setup"
@@ -472,7 +448,6 @@ class Setup:
         self.sesv2 = session.client("sesv2")
         self.s3 = session.client("s3")
         self.lam = session.client("lambda")
-        self.cognito = session.client("cognito-idp")
         self.account = session.client("sts").get_caller_identity()["Account"]
 
     # -- GitHub ---------------------------------------------------------------
@@ -814,187 +789,16 @@ class Setup:
             f"MAIL FROM {identity.get('MailFromAttributes', {}).get('MailFromDomainStatus')}"
         )
 
-    def production_access(self) -> None:
-        say("SES production access")
-        account = self.sesv2.get_account()
-        if account.get("ProductionAccessEnabled"):
-            ok("already enabled")
-            return
-        review = account.get("Details", {}).get("ReviewDetails", {}).get("Status")
-        if review in ("PENDING", "GRANTED"):
-            ok(f"request already filed ({review.lower()})")
-            return
-        self.sesv2.put_account_details(
-            ProductionAccessEnabled=True,
-            MailType="TRANSACTIONAL",
-            WebsiteURL=f"https://{self.domain}",
-            ContactLanguage="EN",
-            AdditionalContactEmailAddresses=[self.email],
-            UseCaseDescription=(
-                f"Personal mailbox for one person on {self.domain}. Outgoing mail is "
-                "individual replies and new messages written by its owner (a few a "
-                "day). No marketing or bulk mail and no mailing lists. Bounces and "
-                "complaints are recorded through a configuration set that publishes to "
-                "EventBridge, and bounced messages are tagged and surfaced to the owner."
-            ),
-        )
-        ok(
-            "requested (AWS aims to review within 24 hours; until then mail only "
-            "reaches verified addresses)"
-        )
-
-    def round_trip(self) -> None:
-        say("Sending a message to the mailbox and checking it end to end")
-        env = self.environment()
-        bucket = env["BUCKET"]
-        marker = uuid.uuid4().hex
-        started = time.time() - 60
-        sent = self.sesv2.send_email(
-            FromEmailAddress=env["FROM_ADDRESS"],
-            Destination={"ToAddresses": [f"setup-check@{self.domain}"]},
-            Content={
-                "Simple": {
-                    "Subject": {"Data": f"Pidge setup check {marker}"},
-                    "Body": {
-                        "Text": {"Data": "Sent by infra/setup.py. Safe to ignore."}
-                    },
-                }
-            },
-        )["MessageId"]
-
-        def arrived() -> tuple[str, str] | None:
-            listed = self.s3.list_objects_v2(Bucket=bucket, Prefix="inbound/")
-            for item in listed.get("Contents", []):
-                if item["LastModified"].timestamp() < started:
-                    continue
-                head = self.s3.get_object(
-                    Bucket=bucket, Key=item["Key"], Range="bytes=0-65535"
-                )["Body"].read()
-                headers = email.parser.BytesHeaderParser(
-                    policy=email.policy.default
-                ).parsebytes(head)
-                if marker in str(headers.get("Subject", "")):
-                    return item["Key"], str(headers.get("Message-ID", ""))
-            return None
-
-        key, message_id = wait_for(
-            arrived,
-            "the test message to arrive",
-            300,
-            remedy=f"Check that {self.domain}'s MX record points at "
-            f"inbound-smtp.{self.region}.amazonaws.com (dig +short MX {self.domain}) "
-            f"and that the {RULE_SET!r} rule set is active in SES.",
-        )
-        ok(f"received as s3://{bucket}/{key}")
-        domain = message_id.strip("<>").partition("@")[2]
-        local = message_id.strip("<>").partition("@")[0]
-        if local != sent:
-            print(f"    note: Message-ID {message_id} does not carry the SES ID {sent}")
-        if domain and domain != env["MESSAGE_ID_DOMAIN"]:
-            print(
-                f"    SES uses @{domain} for Message-IDs here; updating and redeploying."
-            )
-            self.gh("variable", "set", "MESSAGE_ID_DOMAIN", "--body", domain)
-            self.redeploy()
-        else:
-            ok(f"Message-ID domain is {env['MESSAGE_ID_DOMAIN']}")
-
-        ses_id = key.removeprefix("inbound/")
-
-        def ingested() -> str | None:
-            try:
-                body = self.s3.get_object(Bucket=bucket, Key=f"inbound-seen/{ses_id}")[
-                    "Body"
-                ]
-            except self.s3.exceptions.NoSuchKey:
-                return None
-            ulid = body.read().decode().strip()
-            listed = self.s3.list_objects_v2(
-                Bucket=bucket, Prefix=f"msgs/{ulid}/raw.eml"
-            )
-            return ulid if listed.get("KeyCount") else None
-
-        ulid = wait_for(
-            ingested,
-            "the message to be ingested",
-            300,
-            remedy="Check the function's log: aws logs tail /aws/lambda/pidge "
-            f"--since 15m --region {self.region}",
-            every=5,
-        )
-        ok(f"ingested as msgs/{ulid}/ (it is in your inbox, tagged inbox)")
-
-    def pool(self) -> str:
-        pools = self.cognito.list_user_pools(MaxResults=60)["UserPools"]
-        matches = [p["Id"] for p in pools if p["Name"] == POOL]
-        if not matches:
-            fail(
-                f"There is no Cognito user pool named {POOL!r} in {self.region}.",
-                "The deploy creates it; check that the last deploy succeeded: "
-                f"gh run list --workflow deploy.yml --repo {self.repo}",
-            )
-        return matches[0]
-
-    def dcr(self, pool_id: str) -> None:
-        say("Dynamic client registration")
-        described = self.cognito.describe_user_pool(UserPoolId=pool_id)["UserPool"]
-        if described.get("DcrConfiguration", {}).get("EnableStatus") == "Enabled":
-            ok("enabled")
-            return
-        servers = self.cognito.list_resource_servers(UserPoolId=pool_id, MaxResults=10)
-        identifier = servers["ResourceServers"][0]["Identifier"]
-        enable_dcr(self.cognito, pool_id, [f"{identifier}/full"])
-        ok("enabled now")
-
-    def dcr_clients(self, pool_id: str) -> list[dict]:
-        clients = []
-        pages = self.cognito.get_paginator("list_user_pool_clients").paginate(
-            UserPoolId=pool_id, ClientType="DCR"
-        )
-        for page in pages:
-            for summary in page["UserPoolClients"]:
-                clients.append(
-                    self.cognito.describe_user_pool_client(
-                        UserPoolId=pool_id, ClientId=summary["ClientId"]
-                    )["UserPoolClient"]
-                )
-        return clients
-
-    def connect(self, pool_id: str) -> None:
+    def connect(self) -> None:
         say("Connecting your MCP client")
         url = self.lam.get_function_url_config(FunctionName=FUNCTION)["FunctionUrl"]
-        mcp = f"{url.rstrip('/')}/mcp"
-        clients = self.dcr_clients(pool_id)
-        if clients and all(
-            USER_AUTH in c.get("ExplicitAuthFlows", []) for c in clients
-        ):
-            ok(f"{len(clients)} client(s) already registered and allowed email codes")
-            print(f"    MCP URL: {mcp}")
-            return
         print(
-            f"    In Claude: Settings > Connectors > Add custom connector, paste\n"
-            f"        {mcp}\n"
-            "    click Add, then Connect. Close the sign-in page that opens; this waits\n"
-            "    for the client to register."
-        )
-        known = {
-            c["ClientId"]
-            for c in clients
-            if USER_AUTH in c.get("ExplicitAuthFlows", [])
-        }
-        wait_for(
-            lambda: [
-                c for c in self.dcr_clients(pool_id) if c["ClientId"] not in known
-            ],
-            "your MCP client to register",
-            timeout=3600,
-            remedy="In Claude, add the connector with the URL above and click Connect.",
-            every=5,
-        )
-        allow_email_codes(self.cognito, pool_id)
-        print(
-            f"    Now click Connect again and sign in as {self.email} with the code\n"
-            '    emailed to you ("Pidge sign-in"). You should see six tools.'
+            "    In Claude: Settings > Connectors > Add custom connector, paste\n"
+            f"        {url.rstrip('/')}/mcp\n"
+            f"    click Add, then Connect, and sign in as {self.email} with the code\n"
+            '    emailed to you ("Pidge sign-in"). If the sign-in page offers no code\n'
+            "    option yet, wait a minute and click Connect again: the function\n"
+            "    allows it for each new connection within a minute."
         )
 
     def all(self) -> None:
@@ -1004,11 +808,7 @@ class Setup:
         self.variables(self.bootstrap())
         self.deploy()
         self.verify_owner()
-        self.production_access()
-        self.round_trip()
-        pool_id = self.pool()
-        self.dcr(pool_id)
-        self.connect(pool_id)
+        self.connect()
         say("Done. Problems, if any ever happen, show up in the mailbox tagged ops.")
 
 

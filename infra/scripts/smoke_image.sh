@@ -26,6 +26,7 @@ docker run -d --name "$name" -p "127.0.0.1:${port}:8080" \
   -e OWNER_ADDRESS=owner@example.net -e CONFIGURATION_SET=pidge \
   -e MESSAGE_ID_DOMAIN=us-east-2.amazonses.com -e BUCKET=smoke \
   -e ISSUER=https://cognito-idp.us-east-2.amazonaws.com/us-east-2_smoke \
+  -e USER_POOL_ID=us-east-2_smoke \
   "$image" >/dev/null
 trap 'docker logs "$name" 2>&1 | tail -20; docker rm -f "$name" >/dev/null' EXIT
 

@@ -15,6 +15,12 @@ locals {
       pattern     = null
       input       = jsonencode({ action = "reconcile" })
     }
+    clients = {
+      description = "Let newly registered OAuth clients offer email-code sign-in"
+      schedule    = "rate(1 minute)"
+      pattern     = null
+      input       = jsonencode({ action = "clients" })
+    }
     index = {
       description = "Index backstop"
       schedule    = "rate(1 day)"

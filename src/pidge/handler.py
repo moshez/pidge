@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 
 from . import jsonvalue
 from .auth import BearerValidator
+from .clients import PoolClients, allow_email_codes
 from .indexer import run_tracked
 from .ingest import INBOUND, ingest_or_record
 from .killswitch import KillSwitch, is_trip, trip
@@ -23,10 +24,12 @@ class Action(enum.Enum):
     Attributes:
         INDEX: Run the batch indexer.
         RECONCILE: Run the reconciler.
+        CLIENTS: Let new OAuth clients offer email-code sign-in.
     """
 
     INDEX = enum.auto()
     RECONCILE = enum.auto()
+    CLIENTS = enum.auto()
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -38,12 +41,14 @@ class App:
         validator: Checks bearer tokens.
         tools: The MCP tools.
         killswitch: The budget kill switch.
+        pool: The user pool's dynamically registered clients.
     """
 
     services: Services
     validator: BearerValidator
     tools: Sequence[Tool]
     killswitch: KillSwitch
+    pool: PoolClients
 
 
 def object_key(record: Mapping[str, object]) -> str:
@@ -97,6 +102,8 @@ def run_action(app: App, event: Mapping[str, object]) -> object:
     action = Action[jsonvalue.get_str(event, "action").upper()]
     if action is Action.INDEX:
         return dict(indexed=run_tracked(context))
+    if action is Action.CLIENTS:
+        return dict(email_codes_allowed=list(allow_email_codes(app.pool)))
     written = reconcile(context, lambda replayed: dispatch(app, replayed))
     return dict(ops_messages=list(written))
 

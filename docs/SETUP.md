@@ -59,13 +59,15 @@ uses them. Otherwise it signs you in with `aws login`:
 5. Offers to merge the pull request (or waits while you merge it), then
    follows the deploy run to the end.
 6. Waits for you to click the SES verification link sent to your address.
-7. Requests SES production access, unless it is already granted or pending.
-8. Sends a message to the new mailbox and follows it through SES receiving,
-   S3 and ingestion. It reads the received `Message-ID` and, if SES uses a
-   different domain than expected, sets `MESSAGE_ID_DOMAIN` and redeploys.
-9. Makes sure Cognito dynamic client registration is on.
-10. Prints the MCP URL, waits for your MCP client to register, and lets that
-    client offer sign-in by emailed code.
+7. Prints the MCP URL to add to Claude.
+
+The deploy does the rest on its own. After applying the stack it requests
+SES production access (unless already granted or pending) and, on the first
+deploy, sends a message to `setup-check@<domain>` and follows it through SES
+receiving, S3 and ingestion, checking the `Message-ID` domain on the way
+(`infra/scripts/post_deploy.py`). Cognito dynamic client registration is
+turned on by the stack, and the function lets each newly connected client
+offer sign-in by emailed code within a minute.
 
 ## The parts that need you
 
@@ -82,13 +84,10 @@ The script stops and tells you when one of these comes up:
   the account leaves the SES sandbox, mail (including sign-in codes) only
   reaches verified addresses.
 - **Connecting your MCP client.** In Claude: Settings, Connectors, Add custom
-  connector, paste the URL the script prints, Add, Connect. Close the
-  sign-in page that opens; the script notices the new client and fixes it
-  up. Click Connect again and sign in with the emailed code. The client
-  should list six tools.
-
-If you add another MCP client later, run the script again after it
-registers; only the last step has anything left to do.
+  connector, paste the URL the script prints, Add, Connect, and sign in with
+  the emailed code. If the sign-in page offers no code option yet, wait a
+  minute and click Connect again. The client should list six tools. Other
+  MCP clients you add later need nothing more.
 
 ## Options
 
@@ -110,7 +109,7 @@ registers; only the last step has anything left to do.
 - **"Domain already exists"** in the deploy: the Cognito prefix is taken.
   Run the script again with another `--cognito-prefix`.
 - **The first deploy times out waiting for SES domain verification** (capped
-  at 60 minutes): run the script again; it re-runs the deploy.
+  at 60 minutes): run the script again; it deploys again.
 
 ## Cost guardrail
 
