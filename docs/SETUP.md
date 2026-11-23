@@ -8,7 +8,8 @@ python3 infra/setup.py --email you@example.net
 ```
 
 Run it from the repository root. Before anything else it checks for what it
-needs: boto3, OpenTofu, the GitHub CLI (signed in) and AWS CLI 2.32 or later.
+needs: boto3, OpenTofu 1.10 or later, GitHub CLI 2.60 or later (signed in) and
+AWS CLI 2.32 or later.
 For each one that's missing it shows how to install it and offers to do it
 for you, with Homebrew if you have it, or else by downloading the official
 release into `~/.local/bin`. If `gh` isn't signed in, it offers to run
