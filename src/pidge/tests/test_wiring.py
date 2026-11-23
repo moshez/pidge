@@ -22,6 +22,7 @@ from ..toolkit import Services
 from ..tools_read import READ_TOOLS
 from .account import Account
 from .checks import failure, includes
+from .cognito import FakeCognito
 from .flaky import GOOD, FlakyStore, client_error
 from .fakes import (
     PLAIN,
@@ -112,6 +113,7 @@ class TestDispatch(unittest.TestCase):
     def setUp(self) -> None:
         """Build an app."""
         self.world: World = make_world(self)
+        self.cognito = FakeCognito()
         cache = new_cache(self.world, "cache")
         services = Services(context=self.world.context, cache=cache)
         self.app = App(
@@ -119,6 +121,7 @@ class TestDispatch(unittest.TestCase):
             validator=GOOD,
             tools=READ_TOOLS,
             killswitch=Account.create().killswitch(),
+            pool=self.cognito.pool(),
         )
 
     def test_s3(self) -> None:
@@ -152,6 +155,9 @@ class TestDispatch(unittest.TestCase):
         assert_that(
             dispatch(self.app, {"action": "reconcile"}), equal_to({"ops_messages": []})
         )
+        self.cognito.add("new", [])
+        clients = dispatch(self.app, {"action": "clients"})
+        assert_that(clients, equal_to({"email_codes_allowed": ["new"]}))
         assert_that(failure(lambda: dispatch(self.app, {})), instance_of(ValueError))
 
     def test_reconcile_replays_through_dispatch(self) -> None:

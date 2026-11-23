@@ -51,6 +51,16 @@ data "aws_iam_policy_document" "lambda" {
       values   = [var.region]
     }
   }
+  # clients.py: let Claude's dynamically registered clients offer email codes.
+  statement {
+    sid = "AllowEmailCodes"
+    actions = [
+      "cognito-idp:ListUserPoolClients",
+      "cognito-idp:DescribeUserPoolClient",
+      "cognito-idp:UpdateUserPoolClient",
+    ]
+    resources = [aws_cognito_user_pool.pidge.arn]
+  }
   statement {
     sid       = "KillSwitchStopFunction"
     actions   = ["lambda:PutFunctionConcurrency"]
@@ -86,6 +96,7 @@ resource "aws_lambda_function" "pidge" {
       CONFIGURATION_SET = aws_sesv2_configuration_set.pidge.configuration_set_name
       MESSAGE_ID_DOMAIN = var.message_id_domain
       ISSUER            = "https://${aws_cognito_user_pool.pidge.endpoint}"
+      USER_POOL_ID      = aws_cognito_user_pool.pidge.id
       # budget.tf: SNS records from this topic trip the kill switch.
       KILL_SWITCH_TOPIC_ARN = aws_sns_topic.killswitch.arn
     }

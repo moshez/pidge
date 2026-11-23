@@ -407,7 +407,7 @@ Optionally, `tofu plan` on pull requests with the read-only role.
 
 1. **Apply the bootstrap stack** locally.
 2. **Create a Cloudflare API token** (Zone → DNS → Edit, limited to `ncolony.org`) and store it as the GitHub repository secret `CLOUDFLARE_API_TOKEN`.
-3. **Request SES production access** in the console, once per region. It opens a support case with a 24-hour review SLA. Receiving works without it, and so does sending to verified addresses.
+3. **SES production access** is requested by the deploy (`infra/scripts/post_deploy.py`), once per region. It opens a support case with a 24-hour review SLA. Receiving works without it, and so does sending to verified addresses.
 4. **Sign in once** through the MCP client's OAuth flow to confirm email OTP works.
 
 ---

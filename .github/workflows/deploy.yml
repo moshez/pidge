@@ -107,3 +107,9 @@ jobs:
           tofu init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
           tofu apply -input=false -auto-approve
           tofu output
+
+      - name: Request SES production access and check mail end to end
+        env:
+          MAIL_DOMAIN: ${{ vars.MAIL_DOMAIN }}
+          OWNER_EMAIL: ${{ vars.OWNER_EMAIL }}
+        run: python3 infra/scripts/post_deploy.py

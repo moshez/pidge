@@ -10,6 +10,7 @@ from ..toolkit import Services
 from ..tools_read import READ_TOOLS
 from .account import TOPIC, Account, sns_event
 from .checks import failure
+from .cognito import FakeCognito
 from .fakes import make_world, new_cache
 from .flaky import GOOD
 
@@ -29,6 +30,7 @@ class TestKillSwitch(unittest.TestCase):
             validator=GOOD,
             tools=READ_TOOLS,
             killswitch=self.account.killswitch(),
+            pool=FakeCognito().pool(),
         )
 
     def test_trips_and_stays_tripped(self) -> None:

@@ -406,6 +406,7 @@ class Stack:
             CONFIGURATION_SET="pidge",
             MESSAGE_ID_DOMAIN="us-east-2.amazonses.com",
             ISSUER=self.emulator.issuer,
+            USER_POOL_ID="us-east-2_e2e",
             KILL_SWITCH_TOPIC_ARN=KILL_SWITCH_TOPIC,
             LD_PRELOAD="/e2e/libfaketime.so.1",
             FAKETIME_TIMESTAMP_FILE="/e2e/faketime/now",

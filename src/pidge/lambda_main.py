@@ -12,6 +12,7 @@ import boto3  # type: ignore[import-untyped]
 
 from . import ulid
 from .auth import TokenValidator
+from .clients import CognitoPoolClients
 from .awsclients import LambdaInvoker, LambdaThrottle, SesReceiptRules, SesSender
 from .handler import App, dispatch
 from .killswitch import KillSwitch
@@ -115,6 +116,9 @@ def build_app() -> App:  # pragma: no cover
         validator=TokenValidator.create(context.settings.issuer, fetch_url),
         tools=TOOLS,
         killswitch=killswitch_from(os.environ),
+        pool=CognitoPoolClients.create(
+            boto3.client("cognito-idp"), os.environ["USER_POOL_ID"]
+        ),
     )
 
 
