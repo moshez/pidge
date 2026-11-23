@@ -20,6 +20,7 @@ import email.policy
 import getpass
 import json
 import io
+import itertools
 import os
 import pathlib
 import platform
@@ -33,6 +34,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from typing import NoReturn
 
 try:
     import boto3
@@ -58,6 +60,8 @@ PR = "1"
 LOGIN_PROFILE = "pidge-login"
 SETUP_PROFILE = "pidge-setup"
 MIN_AWS_CLI = (2, 32, 0)
+MIN_GH = (2, 60, 0)
+MIN_TOFU = (1, 10, 0)
 AWS_CLI_INSTALL = (
     "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 )
@@ -73,15 +77,35 @@ def ok(text: str) -> None:
     print(f"    ok: {text}", flush=True)
 
 
-def fail(text: str) -> None:
-    print(
-        f"\n!!  {text}\n    Fix that and run this script again; it resumes.",
-        file=sys.stderr,
-    )
+RERUN = "Then run the same setup command again; steps already done are skipped."
+REMEDIES = {
+    "gh": (
+        "If the error above is about permissions or authentication, run\n"
+        "      gh auth refresh -h github.com -s repo,workflow\n"
+        "    (the script needs admin access to the repository's secrets,\n"
+        "    variables and workflows)."
+    ),
+    "tofu": (
+        "If the error above mentions AWS credentials or an expired token, just\n"
+        "    rerun: the script signs you in again. Otherwise the error is in the\n"
+        "    AWS or Cloudflare resources it names; paste it to Claude."
+    ),
+    "aws": "Run that aws command yourself to see its full error.",
+    "brew": "Run `brew doctor` and follow what it says.",
+}
+
+
+def fail(cause: str, remedy: str) -> NoReturn:
+    print(f"\n!!  {cause}\n    What to do: {remedy}\n    {RERUN}", file=sys.stderr)
     sys.exit(1)
 
 
-def run(*command: str, stdin: str | None = None, quiet: bool = True) -> str:
+def run(
+    *command: str,
+    stdin: str | None = None,
+    quiet: bool = True,
+    remedy: str | None = None,
+) -> str:
     result = subprocess.run(
         command,
         input=stdin,
@@ -91,11 +115,15 @@ def run(*command: str, stdin: str | None = None, quiet: bool = True) -> str:
         check=False,
     )
     if result.returncode != 0:
-        fail(f"`{' '.join(command[:3])} ...` failed (exit {result.returncode}).")
+        fail(
+            f"`{' '.join(command)}` failed (exit {result.returncode}); "
+            "its error is printed above.",
+            remedy or REMEDIES.get(command[0], "Read the error printed above."),
+        )
     return result.stdout or ""
 
 
-def wait_for(check, what: str, timeout: float, every: float = POLL):
+def wait_for(check, what: str, timeout: float, remedy: str, every: float = POLL):
     """Poll ``check`` until it returns something truthy."""
     deadline = time.time() + timeout
     while True:
@@ -103,7 +131,7 @@ def wait_for(check, what: str, timeout: float, every: float = POLL):
         if value:
             return value
         if time.time() > deadline:
-            fail(f"Gave up waiting for {what}.")
+            fail(f"Gave up waiting for {what} after {int(timeout)} seconds.", remedy)
         time.sleep(every)
 
 
@@ -186,7 +214,11 @@ def install_gh() -> None:
         run("brew", "install", "gh", quiet=False)
         return
     if sys.platform == "darwin":
-        fail("Install the GitHub CLI: https://github.com/cli/cli#installation")
+        fail(
+            "There is no Homebrew to install the GitHub CLI with.",
+            "Install Homebrew (https://brew.sh), or download gh from "
+            "https://github.com/cli/cli/releases and put it on your PATH.",
+        )
     version = latest_release("cli/cli")
     url = (
         "https://github.com/cli/cli/releases/download/"
@@ -206,7 +238,10 @@ def install_aws() -> None:
         run("brew", "upgrade" if installed else "install", "awscli", quiet=False)
         return
     if sys.platform == "darwin":
-        fail(f"Install AWS CLI 2.32 or later: {AWS_CLI_INSTALL}")
+        fail(
+            "There is no Homebrew to install the AWS CLI with.",
+            f"Install Homebrew (https://brew.sh), or the AWS CLI pkg from {AWS_CLI_INSTALL}",
+        )
     machine = "aarch64" if arch() == "arm64" else "x86_64"
     url = f"https://awscli.amazonaws.com/awscli-exe-linux-{machine}.zip"
     print(f"    downloading {url}", flush=True)
@@ -226,16 +261,42 @@ def aws_cli_ok() -> bool:
     return (aws_cli_version() or ()) >= MIN_AWS_CLI
 
 
+def version_of(command: list[str], position: int) -> tuple[int, ...]:
+    """Run a --version command and parse the dotted version at word ``position``."""
+    if not shutil.which(command[0]):
+        return ()
+    result = subprocess.run(command, capture_output=True, text=True)
+    words = (result.stdout or result.stderr).split()
+    version = words[position].lstrip("v") if len(words) > position else ""
+    parts = []
+    for part in version.split("."):
+        digits = "".join(itertools.takewhile(str.isdigit, part))
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def gh_ok() -> bool:
+    """gh 2.60 or later; checked against every gh command this script runs."""
+    return version_of(["gh", "--version"], 2) >= MIN_GH
+
+
+def tofu_ok() -> bool:
+    """OpenTofu 1.10 or later: the state backend uses S3 native locking."""
+    return version_of(["tofu", "version"], 1) >= MIN_TOFU
+
+
 TOOLS = (
     (
-        "OpenTofu (tofu)",
-        lambda: bool(shutil.which("tofu")),
+        "OpenTofu 1.10 or later (tofu)",
+        tofu_ok,
         install_tofu,
         "brew install opentofu, or https://opentofu.org/docs/intro/install/",
     ),
     (
-        "GitHub CLI (gh)",
-        lambda: bool(shutil.which("gh")),
+        "GitHub CLI 2.60 or later (gh)",
+        gh_ok,
         install_gh,
         "brew install gh, or https://github.com/cli/cli#installation",
     ),
@@ -260,7 +321,7 @@ def check_tools() -> None:
         print(f"    missing: {name}. To install it yourself: {remedy}", flush=True)
         where = "with Homebrew" if shutil.which("brew") else f"into {BIN}"
         if not confirm(f"Install it now {where}?"):
-            fail(f"{name} is needed. Install it: {remedy}")
+            fail(f"{name} is needed and you chose not to install it.", remedy)
         try:
             install()
         except (
@@ -270,16 +331,24 @@ def check_tools() -> None:
             zipfile.BadZipFile,
             tarfile.TarError,
         ) as error:
-            fail(f"Installing {name} failed ({error}). Install it yourself: {remedy}")
+            fail(f"Installing {name} failed: {error}", remedy)
         if not present():
-            fail(f"Installing {name} did not work. Install it yourself: {remedy}")
+            fail(
+                f"{name} was installed, but the check still fails "
+                f"(`which` finds {shutil.which(name.split('(')[-1].rstrip(')'))}).",
+                f"Remove the older copy from your PATH, or: {remedy}",
+            )
         ok(f"{name} installed")
     if subprocess.run(["gh", "auth", "status"], capture_output=True).returncode:
         print("    The GitHub CLI is not signed in.", flush=True)
         if not confirm("Sign in now (gh auth login)?"):
-            fail("Sign in to GitHub: gh auth login")
+            fail("The GitHub CLI is not signed in.", "Run `gh auth login`.")
         if subprocess.run(["gh", "auth", "login"]).returncode:
-            fail("`gh auth login` did not finish. Run it yourself, then rerun this.")
+            fail(
+                "`gh auth login` did not finish.",
+                "Run `gh auth login` and pick GitHub.com, HTTPS, and log in with a "
+                "web browser.",
+            )
     ok("GitHub CLI signed in")
     installed_here = [t for t in ("tofu", "gh", "aws") if (BIN / t).exists()]
     if installed_here and str(BIN) not in original_path.split(os.pathsep):
@@ -357,13 +426,20 @@ def aws_credentials(region: str) -> None:
             )
         if subprocess.run(command).returncode:
             fail(
-                "`aws login` did not finish. An IAM user or role needs the "
-                "SignInLocalDevelopmentAccess managed policy for it; the root user "
-                "needs nothing extra."
+                "`aws login` did not finish.",
+                "Sign in as the account's root user (it needs nothing extra). An IAM "
+                "user needs the managed policy first: aws iam attach-user-policy "
+                "--user-name YOU --policy-arn "
+                "arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess",
             )
         account = aws_works(SETUP_PROFILE, region)
     if not account:
-        fail(f"Signed in, but the {SETUP_PROFILE} profile still has no credentials.")
+        fail(
+            f"Signed in, but the {SETUP_PROFILE} profile still has no credentials.",
+            f"Run `aws configure export-credentials --profile {login_profile}` to "
+            "see the error; `aws logout --profile "
+            f"{login_profile}` clears a stuck session.",
+        )
     ok(f"signed in (account {account}); using AWS_PROFILE={SETUP_PROFILE}")
 
 
@@ -401,10 +477,20 @@ class Setup:
         active = self.ses.describe_active_receipt_rule_set().get("Metadata", {})
         name = active.get("Name")
         if name and name != RULE_SET:
-            fail(
-                f"SES rule set {name!r} is active in {self.region}. Deploying would "
-                f"deactivate it. Move its rules into {RULE_SET!r} or pick another region."
+            print(
+                f"    SES rule set {name!r} is active in {self.region}. Only one can be\n"
+                f"    active, and deploying makes {RULE_SET!r} active instead, so mail\n"
+                f"    that {name!r} handles today would stop being received."
             )
+            if not confirm(f"Deactivate {name!r} now and continue?"):
+                fail(
+                    f"SES rule set {name!r} is active in {self.region}.",
+                    f"Move its rules into {RULE_SET!r} after the deploy, or rerun with "
+                    "--region set to another region that supports SES receiving.",
+                )
+            self.ses.set_active_receipt_rule_set()
+            ok(f"deactivated {name!r}")
+            return
         ok("none besides Pidge's own" if name else "none active")
 
     def cloudflare(
@@ -422,33 +508,23 @@ class Setup:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
 
-    def cloudflare_token(self) -> None:
-        say("Cloudflare API token")
-        token = os.environ.get("CLOUDFLARE_API_TOKEN")
-        if not token and "CLOUDFLARE_API_TOKEN" in self.secret_names():
-            ok("already stored as a GitHub secret")
-            return
-        if not token:
-            print(
-                "    Create one at https://dash.cloudflare.com/profile/api-tokens\n"
-                "    (Create Token > Create Custom Token), named pidge-dns, with:\n"
-                "      Zone > DNS > Edit   and   Zone > Zone > Read\n"
-                f"      Zone Resources: Include > Specific zone > {self.domain}"
-            )
-            token = getpass.getpass("    Paste the token (input hidden): ").strip()
+    def token_problem(self, token: str) -> tuple[str | None, str, list[dict]]:
+        """Check a Cloudflare token: (problem or None, zone ID, MX records)."""
         try:
             zones = self.cloudflare(
                 f"/zones?name={urllib.parse.quote(self.domain)}", token
             )["result"]
         except OSError as error:
-            fail(f"Cloudflare rejected the token: {error}")
+            return f"Cloudflare rejected the token ({error}).", "", []
         if not zones:
-            fail(f"The token cannot see the zone {self.domain}.")
+            return (
+                f"The token works but cannot see the zone {self.domain}: its Zone "
+                f"Resources must include {self.domain}, and the zone must be in "
+                "that Cloudflare account.",
+                "",
+                [],
+            )
         zone = zones[0]["id"]
-        records = self.cloudflare(
-            f"/zones/{zone}/dns_records?type=MX&name={urllib.parse.quote(self.domain)}",
-            token,
-        )["result"]
         check = f"_pidge-setup-check.{self.domain}"
         try:
             for stale in self.cloudflare(
@@ -461,24 +537,65 @@ class Setup:
                 f"/zones/{zone}/dns_records",
                 token,
                 "POST",
-                dict(
-                    type="TXT",
-                    name=check,
-                    content="pidge setup token check",
-                    ttl=60,
-                ),
+                dict(type="TXT", name=check, content="pidge setup check", ttl=60),
             )["result"]
             self.cloudflare(f"/zones/{zone}/dns_records/{probe['id']}", token, "DELETE")
         except OSError as error:
-            fail(
-                f"The token can read {self.domain} but not edit its DNS ({error}). "
-                "Give it Zone > DNS > Edit."
+            return (
+                f"The token can read {self.domain} but not edit its DNS ({error}); "
+                "it needs Zone > DNS > Edit.",
+                "",
+                [],
             )
-        ours = f"inbound-smtp.{self.region}.amazonaws.com"
-        others = [r["content"] for r in records if r["content"].rstrip(".") != ours]
-        if others:
-            fail(f"{self.domain} has MX records that would compete with SES: {others}")
+        records = self.cloudflare(
+            f"/zones/{zone}/dns_records?type=MX&name={urllib.parse.quote(self.domain)}",
+            token,
+        )["result"]
+        return None, zone, records
+
+    def cloudflare_token(self) -> None:
+        say("Cloudflare API token")
+        token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+        if not token and "CLOUDFLARE_API_TOKEN" in self.secret_names():
+            ok("already stored as a GitHub secret")
+            return
+        instructions = (
+            "    Create one at https://dash.cloudflare.com/profile/api-tokens\n"
+            "    (Create Token > Create Custom Token), named pidge-dns, with:\n"
+            "      Permissions: Zone > DNS > Edit   and   Zone > Zone > Read\n"
+            f"      Zone Resources: Include > Specific zone > {self.domain}"
+        )
+        while True:
+            if not token:
+                print(instructions)
+                token = getpass.getpass("    Paste the token (input hidden): ").strip()
+            problem, zone, records = self.token_problem(token)
+            if problem is None:
+                break
+            print(f"    {problem}")
+            if not confirm("Paste a corrected token?"):
+                fail(problem, "Create a token as described above.")
+            token = ""
         ok(f"token can edit {self.domain} (added and removed a test TXT record)")
+        ours = f"inbound-smtp.{self.region}.amazonaws.com"
+        others = [r for r in records if r["content"].rstrip(".") != ours]
+        if others:
+            listed = ", ".join(r["content"] for r in others)
+            print(
+                f"    {self.domain} has MX records that would compete with SES: "
+                f"{listed}.\n    Mail sent to {self.domain} could go there instead."
+            )
+            if not confirm("Delete them now?"):
+                fail(
+                    f"{self.domain} has MX records that would compete with SES: {listed}",
+                    f"Delete them in the Cloudflare dashboard (DNS > Records for "
+                    f"{self.domain}).",
+                )
+            for record in others:
+                self.cloudflare(
+                    f"/zones/{zone}/dns_records/{record['id']}", token, "DELETE"
+                )
+            ok(f"deleted {listed}")
         ok("no MX record competes with SES")
         self.gh("secret", "set", "CLOUDFLARE_API_TOKEN", stdin=token)
         ok("stored as the GitHub secret CLOUDFLARE_API_TOKEN")
@@ -543,9 +660,17 @@ class Setup:
                 ),
                 "the pull request to merge",
                 timeout=24 * 3600,
+                remedy=f"Merge it: gh pr merge {PR} --merge --repo {self.repo}",
             )
         elif pr["state"] != "MERGED":
-            fail(f"Pull request #{PR} is {pr['state'].lower()}.")
+            if not confirm(f"Pull request #{PR} is closed. Reopen it?"):
+                fail(
+                    f"Pull request #{PR} is closed.",
+                    f"Reopen it: gh pr reopen {PR} --repo {self.repo}",
+                )
+            self.gh("pr", "reopen", PR)
+            self.deploy()
+            return
         self.watch_deploy(pr["mergeCommit"]["oid"])
 
     def latest_deploy(self, sha: str | None) -> dict | None:
@@ -574,7 +699,11 @@ class Setup:
             ok("the deploy for this commit already succeeded")
             return
         found = wait_for(
-            lambda: self.latest_deploy(sha), "the deploy run to start", 600
+            lambda: self.latest_deploy(sha),
+            "the deploy run to start",
+            600,
+            remedy="Start it: gh workflow run deploy.yml --ref trunk "
+            f"--repo {self.repo}",
         )
         run_id = str(found["databaseId"])
         if found["status"] == "completed":
@@ -588,7 +717,12 @@ class Setup:
         )
         if result.returncode != 0:
             self.gh("run", "view", run_id, "--log-failed", quiet=False)
-            fail("The deploy failed (log above). Re-running the script re-runs it.")
+            fail(
+                "The deploy failed; the failed step's log is printed above.",
+                f"Read the log (also at https://github.com/{self.repo}/actions/runs/"
+                f"{run_id}). If it is a transient AWS error, just rerun; the script "
+                "re-runs the deploy. Otherwise paste the log to Claude.",
+            )
         ok("deployed")
 
     def redeploy(self) -> None:
@@ -600,6 +734,7 @@ class Setup:
             ),
             "the deploy run to start",
             600,
+            remedy=f"Check the Actions tab: https://github.com/{self.repo}/actions",
         )
         self.watch_deploy(found["headSha"])
 
@@ -631,8 +766,22 @@ class Setup:
                     resent = time.time()
                 return status() == "Success"
 
-            wait_for(verified, "the SES verification link", timeout=24 * 3600)
-        identity = self.sesv2.get_email_identity(EmailIdentity=self.domain)
+            wait_for(
+                verified,
+                "the SES verification link",
+                timeout=24 * 3600,
+                remedy="Look for the email from no-reply-aws@amazon.com (check spam) "
+                "and click its link.",
+            )
+        try:
+            identity = self.sesv2.get_email_identity(EmailIdentity=self.domain)
+        except self.sesv2.exceptions.NotFoundException:
+            fail(
+                f"SES in {self.region} has no identity for {self.domain}.",
+                "The deploy creates it. Check that the last deploy succeeded "
+                f"(gh run list --workflow deploy.yml --repo {self.repo}) and that "
+                f"--region matches the deploy's region ({self.region} here).",
+            )
         ok(
             f"{self.email} verified; {self.domain}: sending "
             f"{identity['VerifiedForSendingStatus']}, DKIM {identity['DkimAttributes']['Status']}, "
@@ -702,7 +851,14 @@ class Setup:
                     return item["Key"], str(headers.get("Message-ID", ""))
             return None
 
-        key, message_id = wait_for(arrived, "the test message to arrive", 300)
+        key, message_id = wait_for(
+            arrived,
+            "the test message to arrive",
+            300,
+            remedy=f"Check that {self.domain}'s MX record points at "
+            f"inbound-smtp.{self.region}.amazonaws.com (dig +short MX {self.domain}) "
+            f"and that the {RULE_SET!r} rule set is active in SES.",
+        )
         ok(f"received as s3://{bucket}/{key}")
         domain = message_id.strip("<>").partition("@")[2]
         local = message_id.strip("<>").partition("@")[0]
@@ -732,14 +888,25 @@ class Setup:
             )
             return ulid if listed.get("KeyCount") else None
 
-        ulid = wait_for(ingested, "the message to be ingested", 300, every=5)
+        ulid = wait_for(
+            ingested,
+            "the message to be ingested",
+            300,
+            remedy="Check the function's log: aws logs tail /aws/lambda/pidge "
+            f"--since 15m --region {self.region}",
+            every=5,
+        )
         ok(f"ingested as msgs/{ulid}/ (it is in your inbox, tagged inbox)")
 
     def pool(self) -> str:
         pools = self.cognito.list_user_pools(MaxResults=60)["UserPools"]
         matches = [p["Id"] for p in pools if p["Name"] == POOL]
         if not matches:
-            fail("The Cognito user pool was not found; did the deploy finish?")
+            fail(
+                f"There is no Cognito user pool named {POOL!r} in {self.region}.",
+                "The deploy creates it; check that the last deploy succeeded: "
+                f"gh run list --workflow deploy.yml --repo {self.repo}",
+            )
         return matches[0]
 
     def dcr(self, pool_id: str) -> None:
@@ -795,6 +962,7 @@ class Setup:
             ],
             "your MCP client to register",
             timeout=3600,
+            remedy="In Claude, add the connector with the URL above and click Connect.",
             every=5,
         )
         allow_email_codes(self.cognito, pool_id)
