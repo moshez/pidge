@@ -1,0 +1,19 @@
+From: Alice <alice@example.com>
+To: me@example.org
+Subject: Top-level related
+Date: Thu, 01 Jan 2026 00:00:00 +0000
+Message-ID: <top-related@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="rel"
+
+--rel
+Content-Type: text/html; charset=utf-8
+
+<p><img src="cid:dot"></p>
+--rel
+Content-Type: image/gif
+Content-Transfer-Encoding: base64
+Content-ID: <dot>
+
+R0lGODlh
+--rel--

@@ -1,0 +1,104 @@
+# Push the Lambda image built and smoke-tested by image.yml, then apply the
+# main stack, on every push to trunk.
+#
+# Needs (infra/setup.py sets these up):
+#   secrets: CLOUDFLARE_API_TOKEN
+#   variables: AWS_DEPLOY_ROLE_ARN, TF_STATE_BUCKET, MAIL_DOMAIN, OWNER_EMAIL,
+#              COGNITO_DOMAIN_PREFIX; optionally
+#              ECR_REPOSITORY (default pidge), MESSAGE_ID_DOMAIN (default
+#              us-east-2.amazonses.com) and BUDGET_LIMIT_USD (default 5)
+name: deploy
+
+on:
+  push:
+    branches: [trunk]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'pidge' }}
+
+jobs:
+  image:
+    uses: ./.github/workflows/image.yml
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Download the tested image
+        uses: actions/download-artifact@v4
+        with:
+          name: pidge-image
+
+      - name: Load the tested image
+        run: gunzip -c pidge-image.tar.gz | docker load
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Refuse to deploy while the budget kill switch is tripped
+        # An apply would re-activate SES receiving behind the kill switch's
+        # back. Recover deliberately instead (RECOVERY.md).
+        run: |
+          limit=$(aws lambda get-function-concurrency --function-name pidge \
+            --query ReservedConcurrentExecutions --output text 2>/dev/null || true)
+          if [ "$limit" = "0" ]; then
+            echo "::error::The budget kill switch is tripped (reserved concurrency 0). See RECOVERY.md."
+            exit 1
+          fi
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push the image
+        id: push
+        env:
+          REPOSITORY_URL: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+        run: |
+          docker tag pidge:candidate "$REPOSITORY_URL:$GITHUB_SHA"
+          docker push "$REPOSITORY_URL:$GITHUB_SHA"
+          digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$GITHUB_SHA" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          echo "repository_url=$REPOSITORY_URL" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install boto3 (the Cognito DCR script needs it)
+        run: python3 -m pip install --user boto3
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
+      - name: Apply the main stack
+        working-directory: infra/main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_mail_domain: ${{ vars.MAIL_DOMAIN }}
+          TF_VAR_owner_email: ${{ vars.OWNER_EMAIL }}
+          TF_VAR_cognito_domain_prefix: ${{ vars.COGNITO_DOMAIN_PREFIX }}
+          TF_VAR_image_uri: ${{ steps.push.outputs.repository_url }}
+          TF_VAR_image_digest: ${{ steps.push.outputs.digest }}
+          TF_VAR_message_id_domain: ${{ vars.MESSAGE_ID_DOMAIN || 'us-east-2.amazonses.com' }}
+          TF_VAR_budget_limit_usd: ${{ vars.BUDGET_LIMIT_USD || '5' }}
+        run: |
+          tofu init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          tofu apply -input=false -auto-approve
+          tofu output

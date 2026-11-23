@@ -4,3 +4,9 @@ __pycache__
 /dist
 /build
 /git-log-head
+# OpenTofu
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan

@@ -1,0 +1,4 @@
+*
+!Dockerfile
+!requirements-lambda.txt
+!dist/*.whl

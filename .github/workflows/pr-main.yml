@@ -14,7 +14,6 @@ jobs:
           - { python: "3.14", os: ubuntu-latest, check: "docs" }
           - { python: "3.14", os: ubuntu-latest, check: "mypy" }
           - { python: "3.14", os: ubuntu-latest, check: "build" }
-          - { python: "3.13", os: ubuntu-latest, check: "dry_release" }
     name: ${{ matrix.check }} on Python ${{ matrix.python }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
 
@@ -40,3 +39,25 @@ jobs:
         run: |
           nox --force-color --python=${{ matrix.python }} --session=${{ matrix.check }}
 
+  image:
+    uses: ./.github/workflows/image.yml
+
+  infra:
+    name: OpenTofu fmt and validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+
+      - name: Check formatting
+        run: tofu fmt -check -recursive infra
+
+      - name: Validate the stacks
+        run: |
+          for stack in infra/bootstrap infra/main; do
+            tofu -chdir="$stack" init -backend=false -input=false
+            tofu -chdir="$stack" validate
+          done

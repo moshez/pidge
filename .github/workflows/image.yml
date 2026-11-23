@@ -1,0 +1,54 @@
+# Build the Lambda image, smoke-test it, and run the end-to-end tests
+# (e2e/: every flow and failure path, against moto). Runs on every branch push and
+# pull request (through pr-main.yml) and before every deploy (deploy.yml),
+# which pushes exactly the image tested here.
+name: image
+
+on:
+  workflow_call:
+
+jobs:
+  image:
+    name: Build and smoke-test the Lambda image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the calendar version is computed from git history
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Build the wheel
+        run: |
+          pip install --upgrade pip nox
+          nox --session build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        run: |
+          docker buildx build --platform linux/amd64 --provenance=false \
+            --load -t pidge:candidate .
+
+      - name: Smoke-test the image
+        run: infra/scripts/smoke_image.sh pidge:candidate
+
+      - name: End-to-end tests (the image against moto)
+        env:
+          PIDGE_IMAGE: pidge:candidate
+        run: nox --session e2e
+
+      - name: Save the image
+        run: docker save pidge:candidate | gzip > pidge-image.tar.gz
+
+      - name: Upload the image
+        uses: actions/upload-artifact@v4
+        with:
+          name: pidge-image
+          path: pidge-image.tar.gz
+          retention-days: 3

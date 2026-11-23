@@ -1,0 +1,49 @@
+From: Alice <alice@example.com>
+To: me@example.org
+Subject: Newsletter
+Date: Thu, 01 Jan 2026 00:00:00 +0000
+Message-ID: <related@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed"
+
+--mixed
+Content-Type: multipart/related; boundary="rel"
+
+--rel
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+
+Newsletter in plain text.
+--alt
+Content-Type: text/html; charset=utf-8
+
+<html><head><style>.banner { background: url(cid:logo123@x); }</style></head>
+<body style="background-image: url('cid:BG%40X')">
+<table><tr><td background="cid:bg@x"><a href="cid:logo123@x"><img src="cid:logo123%40x" alt="logo"></a></td></tr></table>
+<img src="cid:missing@x"><img src='cid:missing@x'>
+</body></html>
+--alt--
+--rel
+Content-Type: image/png; name="logo.png"
+Content-Transfer-Encoding: base64
+Content-ID: <LOGO123@X>
+Content-Disposition: inline; filename="logo.png"
+
+iVBORw0KGgo=
+--rel
+Content-Type: image/jpeg
+Content-Transfer-Encoding: base64
+Content-ID: <bg@x>
+Content-Disposition: inline
+
+/9j/4AA=
+--rel--
+--mixed
+Content-Type: application/pdf; name="report.pdf"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="report.pdf"
+
+JVBERi0=
+--mixed--
