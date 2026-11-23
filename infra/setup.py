@@ -629,57 +629,13 @@ class Setup:
             "AWS_DEPLOY_ROLE_ARN": bootstrap["deploy_role_arn"],
             "TF_STATE_BUCKET": bootstrap["state_bucket"],
             "MAIL_DOMAIN": self.domain,
+            "OWNER_EMAIL": self.email,
             "COGNITO_DOMAIN_PREFIX": self.args.cognito_prefix,
             "BUDGET_LIMIT_USD": self.args.budget_limit,
         }
         for name, value in values.items():
             self.gh("variable", "set", name, "--body", value)
         ok(", ".join(values))
-        # A secret, not a variable: Actions logs (public here) mask secrets.
-        self.gh("secret", "set", "OWNER_EMAIL", stdin=self.email)
-        ok("stored your address as the GitHub secret OWNER_EMAIL")
-        self.forget_logged_email()
-
-    def forget_logged_email(self) -> None:
-        listed = json.loads(self.gh("variable", "list", "--json", "name"))
-        if "OWNER_EMAIL" not in {item["name"] for item in listed}:
-            return
-        self.gh("variable", "delete", "OWNER_EMAIL")
-        ok("removed the old OWNER_EMAIL variable")
-        runs = json.loads(
-            self.gh(
-                "run",
-                "list",
-                "--workflow",
-                "deploy.yml",
-                "--limit",
-                "100",
-                "--json",
-                "databaseId,status",
-            )
-        )
-        runs = [item for item in runs if item["status"] == "completed"]
-        if not runs:
-            return
-        print(
-            f"    Your address was a plain variable, so the logs of the {len(runs)}\n"
-            "    deploy run(s) so far show it to anyone who opens them."
-        )
-        if not confirm("Delete those runs' logs (the runs stay listed)?"):
-            print(
-                "    Kept. To delete them later: gh api -X DELETE "
-                f"repos/{self.repo}/actions/runs/<id>/logs"
-            )
-            return
-        for item in runs:
-            run(
-                "gh",
-                "api",
-                "-X",
-                "DELETE",
-                f"repos/{self.repo}/actions/runs/{item['databaseId']}/logs",
-            )
-        ok(f"deleted the logs of {len(runs)} run(s)")
 
     def deploy(self) -> None:
         say(f"Merging pull request #{PR} and waiting for the deploy")
