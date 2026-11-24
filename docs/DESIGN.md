@@ -148,6 +148,7 @@ pending ──claim (CAS)──▶ sending ──SES Send event──▶ sent �
 
 1. **`send_email` (MCP tool):**
    - Build the MIME. For replies, set `In-Reply-To`/`References` from the stored original.
+   - `From` is the configured `FROM_ADDRESS` unless the `from` argument names another address under `mail_domain` (bare, which keeps the configured display name, or `Name <address>`). Other domains and line breaks are rejected. SES sends against the domain identity and the receipt rule takes the whole domain, so no infra change is needed for a new local part.
    - Add `X-SES-CONFIGURATION-SET: <set>` and `X-SES-MESSAGE-TAGS: outbox_id=<ulid>`. SES strips both before sending.
    - Write `state.json` = `pending` first, then `message.eml`.
    - Write `msgs/`-style records for the outbox copy with the tag `outbox`, plus an `unindexed/` marker, so queued mail is searchable.
@@ -263,7 +264,7 @@ Results are ranked with FTS5's built-in `bm25()`.
 | `search` | `query`, `from?`, `to?`, `after?`, `before?`, `tags?`, `has_attachments?`, `limit?` | list of `{id, date, from, subject, snippet, tags, ranked}` |
 | `get_message` | `id` | headers, body text, attachment list, tags. The attachment list (`headers.attachments`) has `{name, content_type, size, kind}` for every file under `attachments/`: `0-body.html` (kind `body`) first when the message has an HTML body, then attachments (`attachment`), then inline parts (`inline`) |
 | `get_attachment` | `id`, `name` | short-lived presigned S3 URL. Bytes would hit Lambda's response-size limit. Works for any listed name, `0-body.html` included |
-| `send_email` | `to`, `cc?`, `bcc?`, `subject`, `body`, `in_reply_to_id?`, `attach_from?` (existing attachment refs) | outbox ID |
+| `send_email` | `to`, `cc?`, `bcc?`, `subject`, `body`, `in_reply_to_id?`, `from?` (sender under `mail_domain`), `attach_from?` (existing attachment refs) | outbox ID |
 | `tag_email` | `id`, `add?`, `remove?` | new tag set |
 | `list_tags` | — | tags with counts |
 

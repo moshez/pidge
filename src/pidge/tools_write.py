@@ -1,10 +1,12 @@
 """The MCP tools that change the mailbox."""
 
 from collections.abc import Mapping, Sequence
+from email.utils import formataddr, getaddresses, parseaddr
 
 from . import arguments, jsonvalue
 from .compose import AttachmentRef, Draft
 from .outbox import enqueue
+from .ports import Settings
 from .store import NotFound
 from .tagging import TagError, tag_email
 from .toolkit import MESSAGE_ID, TEXT, TEXT_LIST, Services, Tool, ToolError, schema
@@ -37,6 +39,32 @@ def attachment_refs(args: Mapping[str, object]) -> Sequence[AttachmentRef]:
     ]
 
 
+def sender_header(settings: Settings, requested: str) -> str:
+    """Validate the ``from`` argument and build the From header.
+
+    Args:
+        settings: The deployment settings.
+        requested: The requested sender, or empty for the default.
+
+    Returns:
+        The From header, or empty to use the configured address.
+
+    Raises:
+        ToolError: If the sender is malformed or outside the mail domain.
+    """
+    if not requested:
+        return ""
+    if "\r" in requested or "\n" in requested:
+        raise ToolError("from must not contain line breaks")
+    pairs = getaddresses([requested])
+    name, address = pairs[0]
+    local, _, domain = address.rpartition("@")
+    if len(pairs) != 1 or not local or domain.lower() != settings.mail_domain.lower():
+        raise ToolError(f"from must be one address under {settings.mail_domain}")
+    default_name, _ = parseaddr(settings.from_address)
+    return formataddr((name or default_name, address))
+
+
 def run_send_email(services: Services, args: Mapping[str, object]) -> object:
     """Queue a message for sending.
 
@@ -48,7 +76,7 @@ def run_send_email(services: Services, args: Mapping[str, object]) -> object:
         The outbox ID.
 
     Raises:
-        ToolError: If there are no recipients.
+        ToolError: If there are no recipients or the sender is invalid.
     """
     reply_to = arguments.text(args, "in_reply_to_id")
     draft = Draft(
@@ -59,6 +87,7 @@ def run_send_email(services: Services, args: Mapping[str, object]) -> object:
         body=arguments.text(args, "body"),
         in_reply_to=arguments.message_id(args, "in_reply_to_id") if reply_to else "",
         attachments=attachment_refs(args),
+        sender=sender_header(services.context.settings, arguments.text(args, "from")),
     )
     if not draft.to:
         raise ToolError("to must list at least one address")
@@ -99,7 +128,9 @@ SEND_EMAIL = Tool(
     description=(
         "Queue an email for sending; returns its outbox id at once. For a "
         "reply, pass in_reply_to_id so threading headers are set. attach_from "
-        "copies attachments of stored messages."
+        "copies attachments of stored messages. from sets the sender, which must "
+        "be under the mail domain (a bare address or 'Name <address>'); it "
+        "defaults to the mailbox address."
     ),
     schema=schema(
         {
@@ -109,6 +140,7 @@ SEND_EMAIL = Tool(
             "subject": TEXT,
             "body": TEXT,
             "in_reply_to_id": MESSAGE_ID,
+            "from": TEXT,
             "attach_from": {
                 "type": "array",
                 "items": schema({"id": MESSAGE_ID, "name": TEXT}, ["id", "name"]),
