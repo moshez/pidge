@@ -43,6 +43,7 @@ class Draft:
         blind: Blind-copy addresses; never written into the MIME.
         in_reply_to: The ULID of the stored message this replies to, or empty.
         attachments: Attachments of stored messages to include.
+        sender: The From header, or empty for the configured address.
     """
 
     to: Sequence[str]
@@ -52,6 +53,7 @@ class Draft:
     blind: Sequence[str] = ()
     in_reply_to: str = ""
     attachments: Sequence[AttachmentRef] = ()
+    sender: str = ""
 
 
 def recipients(draft: Draft) -> Sequence[str]:
@@ -137,7 +139,7 @@ def compose(context: Context, draft: Draft) -> bytes:
     message = new_message(
         context.clock(),
         settings.mail_domain,
-        settings.from_address,
+        draft.sender or settings.from_address,
         ", ".join(draft.to),
     )
     if draft.cc:
