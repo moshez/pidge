@@ -138,7 +138,9 @@ class TestEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         """Create a client that checks session tokens for real; get a token."""
         self.world = make_world(self)
-        self.client = Client.create(self.world, either(self.world.clock.time))
+        self.client = Client.create(
+            self.world, either(self.world.clock.time), COGNITO_TOKEN
+        )
         self.issued = self.tool("get_session_token", COGNITO_TOKEN)
         self.token = jsonvalue.get_str(self.issued, "token")
 

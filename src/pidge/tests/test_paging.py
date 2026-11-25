@@ -17,7 +17,7 @@ from ..toolkit import Services, ToolError
 from ..tools_read import run_search
 from .checks import failure
 from .fakes import World, deliver, make_world, new_cache, sample_raw
-from .sessionkey import SESSION_KEY
+from .sessionkey import SESSION_KEY, predictable_sessions
 
 BASE = 1_767_225_600
 YEAR = 366 * 86400
@@ -97,6 +97,7 @@ def call(world: World, args: Mapping[str, object]) -> Mapping[str, object]:
         context=world.context,
         cache=new_cache(world, "cache"),
         session_key=SESSION_KEY,
+        sessions=predictable_sessions(print),
     )
     return jsonvalue.as_dict(run_search(services, args))
 

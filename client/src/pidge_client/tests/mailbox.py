@@ -16,7 +16,7 @@ from pidge.memstore import MemoryStore
 from pidge.store import NotFound
 from pidge.tests.fakes import World, deliver, make_world, new_cache, sample_raw
 from pidge.tests.mcpclient import TOOLS
-from pidge.tests.sessionkey import SESSION_KEY
+from pidge.tests.sessionkey import SESSION_KEY, predictable_sessions
 from pidge.toolkit import Services
 
 from ..transport import Reply, Session, Transport
@@ -52,12 +52,14 @@ class InProcess:
             body: The request body.
 
         Returns:
-            401 for a wrong token, else the JSON-RPC response.
+            401 for a wrong token, else what pidge answers.
         """
         if headers.get("Authorization") != f"Bearer {self.token}":
             return Reply(status=401, body=b'{"error": "invalid_token"}')
-        response = handle_rpc(self.services, TOOLS, body)
-        return Reply(status=200, body=json.dumps(response).encode())
+        session_id = headers.get("Mcp-Session-Id")
+        answer = handle_rpc(self.services, TOOLS, body, session_id)
+        payload = b"" if answer.payload is None else json.dumps(answer.payload).encode()
+        return Reply(status=answer.status, body=payload, headers=answer.headers)
 
     def get(self, url: str) -> Reply:
         """Serve a presigned ``memory:`` URL from the store.
@@ -104,6 +106,7 @@ def empty_mailbox(case: unittest.TestCase) -> Mailbox:
         context=world.context,
         cache=new_cache(world, "cache"),
         session_key=SESSION_KEY,
+        sessions=predictable_sessions(print),
         endpoint=ENDPOINT,
     )
     transport = InProcess(services=services, store=world.store)
@@ -187,6 +190,8 @@ class Handler(http.server.BaseHTTPRequestHandler):  # noqa: SLD401,SLD504
             reply: The reply.
         """
         self.send_response(reply.status)
+        for name, value in reply.headers.items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(reply.body)))
         self.end_headers()
         self.wfile.write(reply.body)
@@ -195,6 +200,8 @@ class Handler(http.server.BaseHTTPRequestHandler):  # noqa: SLD401,SLD504
         """Serve a POST."""
         body = self.rfile.read(int(self.headers["Content-Length"]))
         headers = {"Authorization": self.headers.get("Authorization", "")}
+        if "Mcp-Session-Id" in self.headers:
+            headers["Mcp-Session-Id"] = self.headers["Mcp-Session-Id"]
         self.answer(self.transport.post(self.path, headers, body))
 
     def do_GET(self) -> None:  # noqa: N802

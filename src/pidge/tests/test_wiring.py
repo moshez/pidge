@@ -24,7 +24,7 @@ from .account import Account
 from .checks import failure, includes
 from .cognito import FakeCognito
 from .flaky import GOOD, FlakyStore, client_error
-from .sessionkey import SESSION_KEY
+from .sessionkey import SESSION_KEY, predictable_sessions
 from .fakes import (
     PLAIN,
     World,
@@ -129,7 +129,10 @@ class TestDispatch(unittest.TestCase):
         self.cognito = FakeCognito()
         cache = new_cache(self.world, "cache")
         services = Services(
-            context=self.world.context, cache=cache, session_key=SESSION_KEY
+            context=self.world.context,
+            cache=cache,
+            session_key=SESSION_KEY,
+            sessions=predictable_sessions(print),
         )
         self.app = App(
             services=services,

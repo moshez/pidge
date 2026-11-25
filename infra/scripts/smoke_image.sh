@@ -28,6 +28,7 @@ docker run -d --name "$name" -p "127.0.0.1:${port}:8080" \
   -e ISSUER=https://cognito-idp.us-east-2.amazonaws.com/us-east-2_smoke \
   -e USER_POOL_ID=us-east-2_smoke \
   -e SESSION_KEY_PARAMETER=/pidge/session-signing-key \
+  -e PIDGE_BUILD="${GITHUB_SHA:-smoke}" \
   "$image" >/dev/null
 trap 'docker logs "$name" 2>&1 | tail -20; docker rm -f "$name" >/dev/null' EXIT
 
