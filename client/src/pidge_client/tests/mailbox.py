@@ -7,6 +7,7 @@ import http.server
 import pathlib
 import threading
 import unittest
+import urllib.parse
 from collections.abc import Iterator, Mapping, Sequence
 
 import pidge.tests
@@ -84,6 +85,25 @@ class InProcess:
             return Reply(status=200, body=self.store.get(key).body)
         except NotFound:
             return Reply(status=404, body=b"NoSuchKey")
+
+    def put(self, url: str, body: bytes) -> Reply:
+        """Store a body PUT to a presigned ``memory:`` upload URL.
+
+        Like S3, refuse a body whose size is not the signed one.
+
+        Args:
+            url: The URL.
+            body: The body.
+
+        Returns:
+            200, or 403 for the wrong size.
+        """
+        key, _, query = url.removeprefix("memory:").partition("?")
+        signed = urllib.parse.parse_qs(query)["size"][0]
+        if int(signed) != len(body):
+            return Reply(status=403, body=b"SignatureDoesNotMatch")
+        self.store.put(key, body)
+        return Reply(status=200, body=b"")
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -204,17 +224,28 @@ class Handler(http.server.BaseHTTPRequestHandler):  # noqa: SLD401,SLD504
         self.end_headers()
         self.wfile.write(reply.body)
 
+    def body(self) -> bytes:
+        """Read the request body.
+
+        Returns:
+            The body.
+        """
+        return self.rfile.read(int(self.headers["Content-Length"]))
+
     def do_POST(self) -> None:  # noqa: N802
         """Serve a POST."""
-        body = self.rfile.read(int(self.headers["Content-Length"]))
         headers = {
             name: self.headers.get(name, "") for name in ("Authorization", "Accept")
         }
-        self.answer(self.transport.post(self.path, headers, body))
+        self.answer(self.transport.post(self.path, headers, self.body()))
 
     def do_GET(self) -> None:  # noqa: N802
         """Serve a GET of ``/memory:<key>``."""
         self.answer(self.transport.get(self.path.removeprefix("/")))
+
+    def do_PUT(self) -> None:  # noqa: N802
+        """Serve a PUT to ``/memory:<key>?size=<n>``."""
+        self.answer(self.transport.put(self.path.removeprefix("/"), self.body()))
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         """Stay quiet.

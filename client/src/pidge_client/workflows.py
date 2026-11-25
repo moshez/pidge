@@ -73,6 +73,29 @@ def fetch_body_html(session: Session, message: Message) -> str | None:
     return reply.body.decode("utf-8", "replace")
 
 
+def upload_attachment(
+    session: Session, name: str, data: bytes, content_type: str | None = None
+) -> str:
+    """Upload a new file for ``send_email`` to attach.
+
+    Calls ``put_attachment``, then PUTs the bytes to the presigned URL with
+    no Authorization header.
+
+    Args:
+        session: The session.
+        name: The attachment's file name.
+        data: The file.
+        content_type: Its MIME type (server default application/octet-stream).
+
+    Returns:
+        The upload ID, for ``AttachUpload(upload=...)`` in a draft. A failed
+        upload raises HTTPStatusError.
+    """
+    upload = calls.put_attachment(session, name, len(data), content_type)
+    check_status(session.transport.put(upload.url, data), 200)
+    return upload.upload_id
+
+
 def archive(session: Session, ids: Iterable[str]) -> Mapping[str, Sequence[str]]:
     """Archive messages: remove the ``inbox`` tag from each.
 

@@ -14,6 +14,7 @@ from . import ulid
 from .auth import TokenValidator
 from .clients import CognitoPoolClients
 from .awsclients import (
+    KeyedSigner,
     LambdaInvoker,
     LambdaThrottle,
     SesReceiptRules,
@@ -23,7 +24,7 @@ from .awsclients import (
 from .handler import App, dispatch
 from .killswitch import KillSwitch
 from .ports import Context, Settings
-from .s3store import S3Store
+from .s3store import S3Store, URLSigner
 from .search import ShardCache
 from .refresh import REFRESH_TOOL_SET
 from .sessions import SESSION_TOOLS, EitherValidator, SessionValidator
@@ -87,6 +88,35 @@ def killswitch_from(environ: Mapping[str, str]) -> KillSwitch:  # pragma: no cov
     )
 
 
+def signing_client(key_id: str, secret: str) -> URLSigner:  # pragma: no cover
+    """Build an S3 client that signs with a fixed access key.
+
+    Args:
+        key_id: The access key ID.
+        secret: The secret access key.
+
+    Returns:
+        The client.
+    """
+    client: URLSigner = boto3.client(
+        "s3", aws_access_key_id=key_id, aws_secret_access_key=secret
+    )
+    return client
+
+
+def signer_from(environ: Mapping[str, str]) -> URLSigner:  # pragma: no cover
+    """Wire the URL signer (Terraform's pidge-url-signer IAM user).
+
+    Args:
+        environ: The process environment.
+
+    Returns:
+        The signer; it reads the secret from SSM on first use.
+    """
+    secret = SsmSecret.create(boto3.client("ssm"), environ["SIGNER_SECRET_PARAMETER"])
+    return KeyedSigner.create(environ["SIGNER_KEY_ID"], secret.value, signing_client)
+
+
 def context_from(environ: Mapping[str, str]) -> Context:  # pragma: no cover
     """Wire the flow context to AWS.
 
@@ -98,7 +128,9 @@ def context_from(environ: Mapping[str, str]) -> Context:  # pragma: no cover
     """
     settings = settings_from(environ)
     return Context(
-        store=S3Store.create(boto3.client("s3"), environ["BUCKET"]),
+        store=S3Store.create(
+            boto3.client("s3"), environ["BUCKET"], signer_from(environ)
+        ),
         sender=SesSender.create(boto3.client("sesv2"), settings.configuration_set),
         invoker=LambdaInvoker.create(
             boto3.client("lambda"), environ["AWS_LAMBDA_FUNCTION_NAME"]

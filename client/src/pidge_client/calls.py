@@ -12,7 +12,7 @@ import functools
 from collections.abc import Mapping, Sequence
 
 from . import jsonshape, models
-from .models import Hit, Message, Page, Queued, Token
+from .models import Hit, Message, Page, Queued, Token, Upload
 from .transport import Session, call_tool
 
 # Request fields named differently from the tool parameter (``from`` is a keyword).
@@ -75,6 +75,17 @@ class AttachFrom:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class AttachUpload:
+    """A file uploaded through ``put_attachment``, to attach to an outgoing one.
+
+    Attributes:
+        upload: The upload ID.
+    """
+
+    upload: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class Draft:
     """``send_email`` arguments.
 
@@ -86,7 +97,7 @@ class Draft:
         blind: Bcc recipients (the tool's ``bcc``).
         in_reply_to_id: The ID of the message this replies to.
         sender: The From address, under the mail domain (the tool's ``from``).
-        attach_from: Attachments to copy from stored messages.
+        attach_from: Attachments to copy from stored messages, and uploads.
     """
 
     to: Sequence[str]
@@ -96,7 +107,7 @@ class Draft:
     blind: Sequence[str] | None = None
     in_reply_to_id: str | None = None
     sender: str | None = None
-    attach_from: Sequence[AttachFrom] | None = None
+    attach_from: Sequence[AttachFrom | AttachUpload] | None = None
 
 
 SEARCH = Signature(
@@ -116,7 +127,12 @@ SEARCH = Signature(
 )
 GET_MESSAGE = Signature(tool="get_message", params={"id": "string"})
 GET_ATTACHMENT = Signature(
-    tool="get_attachment", params={"id": "string", "name": "string"}
+    tool="get_attachment",
+    params={"id": "string", "name": "string", "duration": "integer"},
+)
+PUT_ATTACHMENT = Signature(
+    tool="put_attachment",
+    params={"name": "string", "size": "integer", "content_type": "string"},
 )
 LIST_TAGS = Signature(tool="list_tags", params={})
 TAG_EMAIL = Signature(
@@ -144,6 +160,7 @@ SIGNATURES = (
     LIST_TAGS,
     TAG_EMAIL,
     SEND_EMAIL,
+    PUT_ATTACHMENT,
     GET_SESSION_TOKEN,
     REFRESH_TOOLS,
 )
@@ -173,6 +190,19 @@ def attachment_json(value: AttachFrom) -> object:
         ``{"id": ..., "name": ...}``.
     """
     return dict(id=value.id, name=value.name)
+
+
+@to_json.register
+def upload_json(value: AttachUpload) -> object:
+    """Convert an upload reference.
+
+    Args:
+        value: The reference.
+
+    Returns:
+        ``{"upload": ...}``.
+    """
+    return dict(upload=value.upload)
 
 
 @to_json.register(list)
@@ -255,19 +285,43 @@ def get_message(session: Session, ulid: str) -> Message:
     return models.parse_message(call(session, GET_MESSAGE, {"id": ulid}))
 
 
-def get_attachment(session: Session, ulid: str, name: str) -> str:
-    """Get a short-lived download URL for a stored part.
+def get_attachment(
+    session: Session, ulid: str, name: str, duration: int | None = None
+) -> str:
+    """Get a download URL for a stored part.
 
     Args:
         session: The session.
         ulid: The message ID.
         name: The attachment's stored name (for example ``0-body.html``).
+        duration: Seconds the URL works for (server default 900, at most
+            28800).
 
     Returns:
         The presigned URL.
     """
-    found = call(session, GET_ATTACHMENT, {"id": ulid, "name": name})
-    return jsonshape.get_str(found, "url")
+    values = {"id": ulid, "name": name, "duration": duration}
+    return jsonshape.get_str(call(session, GET_ATTACHMENT, values), "url")
+
+
+def put_attachment(
+    session: Session, name: str, size: int, content_type: str | None = None
+) -> Upload:
+    """Reserve an upload for a new attachment of exactly ``size`` bytes.
+
+    :func:`pidge_client.workflows.upload_attachment` also PUTs the bytes.
+
+    Args:
+        session: The session.
+        name: The attachment's file name.
+        size: Its size in bytes (at most 25 MiB).
+        content_type: Its MIME type (server default application/octet-stream).
+
+    Returns:
+        The upload ID and the presigned PUT URL.
+    """
+    values = {"name": name, "size": size, "content_type": content_type}
+    return models.parse_upload(call(session, PUT_ATTACHMENT, values))
 
 
 def list_tags(session: Session) -> Mapping[str, int]:

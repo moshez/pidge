@@ -1,8 +1,8 @@
-"""Tests for paging, body download and archiving."""
+"""Tests for paging, body download, uploads and archiving."""
 
 import dataclasses
 import unittest
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from hamcrest import assert_that, contains_string, equal_to, none
 
@@ -11,9 +11,9 @@ from pidge.tagging import tag_email
 from pidge.tests.fakes import sample_raw
 
 from .. import calls
-from ..calls import SearchArgs
+from ..calls import AttachUpload, Draft, SearchArgs
 from ..transport import HTTPStatusError, Reply
-from ..workflows import archive, fetch_body_html, iter_search
+from ..workflows import archive, fetch_body_html, iter_search, upload_attachment
 from ..transport import Transport
 from .mailbox import BASE, dated, empty_mailbox, fixture_mailbox, receive
 
@@ -48,6 +48,18 @@ class ExpiredLinks:
 
         Args:
             url: Ignored.
+
+        Returns:
+            A 403.
+        """
+        return Reply(status=403, body=b"expired")
+
+    def put(self, url: str, body: bytes) -> Reply:
+        """Refuse an upload.
+
+        Args:
+            url: Ignored.
+            body: Ignored.
 
         Returns:
             A 403.
@@ -127,14 +139,38 @@ class TestFetchBody(unittest.TestCase):
         session = self.mailbox.session
         assert_that(fetch_body_html(session, calls.get_message(session, ulid)), none())
 
-    def test_download_failure(self) -> None:
-        """A failed download raises HTTPStatusError."""
+    def test_refused_links(self) -> None:
+        """A refused download or upload raises HTTPStatusError."""
         expired = ExpiredLinks(inner=self.mailbox.transport)
         session = dataclasses.replace(self.mailbox.session, transport=expired)
         message = calls.get_message(session, self.ids["alternative"])
-        with self.assertRaises(HTTPStatusError) as caught:
-            fetch_body_html(session, message)
-        assert_that(str(caught.exception), equal_to("(403, 'expired')"))
+        refused: list[Callable[[], object]] = [
+            lambda: fetch_body_html(session, message),
+            lambda: upload_attachment(session, "a.bin", b"x"),
+        ]
+        for action in refused:
+            with self.assertRaises(HTTPStatusError) as caught:
+                action()
+            assert_that(str(caught.exception), equal_to("(403, 'expired')"))
+
+
+class TestUpload(unittest.TestCase):
+    """Uploading a new file and attaching it to an outgoing message."""
+
+    def test_upload_and_send(self) -> None:
+        """The upload goes out as an attachment with its name and type."""
+        mailbox = empty_mailbox(self)
+        session = mailbox.session
+        upload_id = upload_attachment(session, "a.csv", b"1,2\n", "text/csv")
+        draft = Draft(
+            to=["x@example.com"],
+            subject="Numbers",
+            body="Attached.",
+            attach_from=[AttachUpload(upload=upload_id)],
+        )
+        sent = calls.get_message(session, calls.send_email(session, draft).outbox_id)
+        part = sent.headers.attachments[0]
+        assert_that((part.name, part.content_type), equal_to(("1-a.csv", "text/csv")))
 
 
 class TestArchive(unittest.TestCase):

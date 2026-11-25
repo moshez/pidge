@@ -2,11 +2,12 @@
 
 import dataclasses
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Protocol
 
 from . import jsonvalue
 from .ports import Envelope, SendRejected
+from .s3store import URLSigner
 
 REJECTION_CODES = frozenset(
     {
@@ -281,3 +282,54 @@ class SsmSecret:
             parameter = jsonvalue.as_dict(response["Parameter"])
             self._cache.append(jsonvalue.get_str(parameter, "Value").encode("utf-8"))
         return self._cache[0]
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class KeyedSigner:
+    """Presigns S3 URLs with a fixed IAM access key, built on first use.
+
+    A presigned URL stops working when the credentials that signed it
+    expire, and the Lambda role's temporary credentials can expire within
+    the hour. A long-term key lets a URL last its whole requested lifetime.
+
+    Construct it with :meth:`create`.
+    """
+
+    _key_id: str
+    _secret: Callable[[], bytes]
+    _factory: Callable[[str, str], URLSigner]
+    _cache: list[URLSigner]
+
+    @classmethod
+    def create(
+        cls,
+        key_id: str,
+        secret: Callable[[], bytes],
+        factory: Callable[[str, str], URLSigner],
+    ) -> "KeyedSigner":
+        """Describe the signer without contacting AWS.
+
+        Args:
+            key_id: The access key ID.
+            secret: Returns the secret access key.
+            factory: Builds an S3 client from a key ID and secret.
+
+        Returns:
+            The signer.
+        """
+        return cls(_key_id=key_id, _secret=secret, _factory=factory, _cache=[])
+
+    def generate_presigned_url(self, *args: object, **kwargs: object) -> str:
+        """Create a presigned URL.
+
+        Args:
+            *args: Positional parameters.
+            **kwargs: Request parameters.
+
+        Returns:
+            The URL.
+        """
+        if not self._cache:
+            secret = self._secret().decode("utf-8")
+            self._cache.append(self._factory(self._key_id, secret))
+        return self._cache[0].generate_presigned_url(*args, **kwargs)

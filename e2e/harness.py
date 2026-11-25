@@ -50,6 +50,7 @@ FUNCTION_HOST = "abc123.lambda-url.us-east-2.on.aws"
 RESOURCE = f"https://{FUNCTION_HOST}/mcp"
 SCOPE = f"{RESOURCE}/full"
 SESSION_KEY_PARAMETER = "/pidge/session-signing-key"
+SIGNER_SECRET_PARAMETER = "/pidge/url-signer-secret"
 BUILD = "e2e0build"
 KILL_SWITCH_TOPIC = "arn:aws:sns:us-east-2:123456789012:budget-killswitch"
 MOTO_IMAGE = os.environ.get("MOTO_IMAGE", "motoserver/moto:5.2.5")
@@ -392,6 +393,9 @@ class Stack:
         self.client("ssm", direct=True).put_parameter(
             Name=SESSION_KEY_PARAMETER, Type="SecureString", Value="k" * 64
         )
+        self.client("ssm", direct=True).put_parameter(
+            Name=SIGNER_SECRET_PARAMETER, Type="SecureString", Value="e2e"
+        )
         self.start_function()
 
     def start_function(self) -> None:
@@ -413,6 +417,8 @@ class Stack:
             ISSUER=self.emulator.issuer,
             USER_POOL_ID="us-east-2_e2e",
             SESSION_KEY_PARAMETER=SESSION_KEY_PARAMETER,
+            SIGNER_KEY_ID="e2e",
+            SIGNER_SECRET_PARAMETER=SIGNER_SECRET_PARAMETER,
             PIDGE_BUILD=BUILD,
             KILL_SWITCH_TOPIC_ARN=KILL_SWITCH_TOPIC,
             LD_PRELOAD="/e2e/libfaketime.so.1",

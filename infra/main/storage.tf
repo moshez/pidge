@@ -29,6 +29,7 @@ locals {
     "ops-sent/"         = 7  # once-a-day dedupe markers for ops mail
     "aws/"              = 30 # Lambda's async failure records, once replayed
     "failed-events/"    = 90 # parked records, kept for a look
+    "uploads/"          = 7  # put_attachment files; send_email copies them
   }
 }
 

@@ -143,6 +143,23 @@ class Queued:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Upload:
+    """A ``put_attachment`` result.
+
+    Attributes:
+        upload_id: Pass it to ``send_email`` as ``AttachUpload(upload=...)``.
+        url: The presigned URL to PUT the bytes to.
+        size: The only body size the URL accepts.
+        expires_in: Seconds the URL works for.
+    """
+
+    upload_id: str
+    url: str
+    size: int
+    expires_in: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class ToolSummary:
     """One tool in a ``refresh_tools`` result.
 
@@ -314,3 +331,20 @@ def parse_refreshed(obj: Mapping[str, object]) -> Refreshed:
         for tool in jsonshape.get_objects(obj, "tools")
     ]
     return Refreshed(tools=tools, build=jsonshape.get_str(obj, "build"))
+
+
+def parse_upload(obj: Mapping[str, object]) -> Upload:
+    """Parse a ``put_attachment`` result.
+
+    Args:
+        obj: The JSON object.
+
+    Returns:
+        The upload.
+    """
+    return Upload(
+        upload_id=jsonshape.get_str(obj, "upload_id"),
+        url=jsonshape.get_str(obj, "url"),
+        size=jsonshape.get_int(obj, "size"),
+        expires_in=jsonshape.get_int(obj, "expires_in"),
+    )

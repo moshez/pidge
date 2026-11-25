@@ -5,7 +5,7 @@ Layers, each usable on its own:
 - :mod:`pidge_client.transport`: :class:`~pidge_client.transport.Session`
   sends JSON-RPC ``tools/call`` requests.
 - :mod:`pidge_client.calls`: one typed wrapper per tool.
-- :mod:`pidge_client.workflows`: paging, body download and archiving.
+- :mod:`pidge_client.workflows`: paging, body download, uploads and archiving.
 - :mod:`pidge_client.views`: pure HTML renderers (no network).
 """
 

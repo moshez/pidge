@@ -59,6 +59,18 @@ class Canned:
         """
         return self.reply
 
+    def put(self, url: str, body: bytes) -> Reply:  # pragma: no cover
+        """Return the reply (no test here uploads).
+
+        Args:
+            url: Ignored.
+            body: Ignored.
+
+        Returns:
+            The reply.
+        """
+        return self.reply
+
 
 def answering(status: int, body: bytes) -> Session:
     """Build a session whose transport always replies the same way.
@@ -117,7 +129,7 @@ class TestSession(unittest.TestCase):
     def test_list_tools(self) -> None:
         """tools/list returns the tool descriptions."""
         names = [tool["name"] for tool in list_tools(empty_mailbox(self).session)]
-        assert_that(names, has_length(8))
+        assert_that(names, has_length(9))
 
 
 class TestUnwrap(unittest.TestCase):
@@ -153,6 +165,18 @@ class TestUrllib(unittest.TestCase):
                 calls.list_tags(dataclasses.replace(session, token="stale"))
             reply = UrllibTransport.create().get(f"{base}/memory:msgs/{ulid}/body.txt")
         assert_that((reply.status, reply.body), equal_to((200, b"Body of Over HTTP\n")))
+
+    def test_upload(self) -> None:
+        """PUTs store the body; S3-style, a body of the wrong size is refused."""
+        mailbox = empty_mailbox(self)
+        transport = UrllibTransport.create()
+        with http_server(mailbox.transport) as base:
+            url = f"{base}/memory:uploads/u/data?size=3"
+            statuses = [transport.put(url, b"abcd").status]
+            statuses.append(transport.put(url, b"abc").status)
+            stored = transport.get(f"{base}/memory:uploads/u/data")
+        assert_that(statuses, equal_to([403, 200]))
+        assert_that(stored.body, equal_to(b"abc"))
 
     def test_missing_object(self) -> None:
         """A presigned URL for a missing object is a 404."""

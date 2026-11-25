@@ -3,7 +3,7 @@
 import dataclasses
 import hashlib
 import urllib.parse
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from .store import Listed, NotFound, NotModified, PreconditionFailed, StoredObject
 
@@ -194,15 +194,41 @@ class MemoryStore:
             for key in keys[:limit]
         ]
 
-    def presign(self, key: str, filename: str) -> str:
+    def presign(self, key: str, filename: str, seconds: int) -> str:  # noqa: SLD303
         """Create a fake download URL.
 
         Args:
             key: The object key.
             filename: The download file name to suggest.
+            seconds: How long the URL works.
 
         Returns:
             A ``memory:`` URL describing the request.
         """
-        query = urllib.parse.urlencode(dict(filename=filename))
-        return f"memory:{key}?{query}" if self._entries else ""
+        return memory_url(key, dict(filename=filename, expires=seconds))
+
+    def presign_upload(self, key: str, size: int, seconds: int) -> str:  # noqa: SLD303
+        """Create a fake upload URL.
+
+        Args:
+            key: The object key.
+            size: The only body size the URL accepts.
+            seconds: How long the URL works.
+
+        Returns:
+            A ``memory:`` URL describing the request.
+        """
+        return memory_url(key, dict(size=size, expires=seconds))
+
+
+def memory_url(key: str, query: Mapping[str, object]) -> str:
+    """Build a fake presigned URL.
+
+    Args:
+        key: The object key.
+        query: What the URL was signed for.
+
+    Returns:
+        ``memory:<key>?<query>``.
+    """
+    return f"memory:{key}?{urllib.parse.urlencode(query)}"

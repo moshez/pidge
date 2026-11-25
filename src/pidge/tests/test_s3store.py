@@ -145,7 +145,7 @@ class TestS3Store(unittest.TestCase):
     def test_reads(self) -> None:
         """Reads return bodies and ETags, with conditions applied."""
         fake = FakeS3.create(body(b"x"), body(b"y"), client_error("304", 304))
-        store = S3Store.create(fake, "bucket")
+        store = S3Store.create(fake, "bucket", fake)
         assert_that(store.get("k").body, equal_to(b"x"))
         assert_that(store.get_if_changed("k", '"e0"').etag, equal_to('"e1"'))
         assert_that(
@@ -158,7 +158,7 @@ class TestS3Store(unittest.TestCase):
         etag = {"ETag": '"e2"'}
         conflict = client_error("PreconditionFailed", 412)
         fake = FakeS3.create(etag, etag, etag, conflict, {}, {})
-        store = S3Store.create(fake, "bucket")
+        store = S3Store.create(fake, "bucket", fake)
         assert_that(store.put("k", b"1"), equal_to('"e2"'))
         store.put_new("k", b"1")
         store.replace("k", b"1", '"e1"')
@@ -181,20 +181,21 @@ class TestS3Store(unittest.TestCase):
         }
         second = {"Contents": [{"Key": "b", "ETag": '"2"', "LastModified": "?"}]}
         fake = FakeS3.create(first, second)
-        listed = S3Store.create(fake, "bucket").list("", 5)
+        listed = S3Store.create(fake, "bucket", fake).list("", 5)
         assert_that([entry.key for entry in listed], contains_exactly("a", "b"))
         assert_that(listed[0].modified, equal_to(stamp.timestamp()))
         includes(fake.recorded()[1][1], dict(ContinuationToken="t"))
 
     def test_presign(self) -> None:
-        """Presigned URLs suggest the file name."""
+        """Downloads suggest the file name; uploads sign the body size."""
         fake = FakeS3.create()
-        assert_that(
-            S3Store.create(fake, "b").presign("k", "a b.pdf"),
-            equal_to("https://signed"),
-        )
-        params = fake.recorded()[0][1]
-        includes(params, dict(operation="get_object", ExpiresIn=900))
+        store = S3Store.create(FakeS3.create(), "b", fake)
+        urls = [store.presign("k", "a b.pdf", 600), store.presign_upload("u", 7, 900)]
+        assert_that(urls, equal_to(["https://signed"] * 2))
+        (_, download), (_, upload) = fake.recorded()
+        includes(download, dict(operation="get_object", ExpiresIn=600))
+        includes(upload, dict(operation="put_object", ExpiresIn=900))
+        includes(upload["Params"], dict(ContentLength=7, Key="u"))
 
     def test_translate(self) -> None:
         """Error codes and statuses map to store exceptions."""

@@ -14,6 +14,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Protocol
 
 from . import jsonshape
+from .events import stream_messages
 
 PROTOCOL_VERSION = "2025-11-25"
 TIMEOUT = 60.0
@@ -71,6 +72,17 @@ class Transport(Protocol):
 
         Args:
             url: The URL.
+
+        Returns:
+            The response, whatever its status.
+        """
+
+    def put(self, url: str, body: bytes) -> Reply:
+        """PUT a body to a URL with no extra headers (a presigned upload).
+
+        Args:
+            url: The URL.
+            body: The body; its length is sent as Content-Length.
 
         Returns:
             The response, whatever its status.
@@ -144,6 +156,19 @@ class UrllibTransport:
         """
         return send(urllib.request.Request(url, method="GET"), self._timeout)
 
+    def put(self, url: str, body: bytes) -> Reply:
+        """PUT a body to a URL.
+
+        Args:
+            url: The URL.
+            body: The body.
+
+        Returns:
+            The response.
+        """
+        request = urllib.request.Request(url, data=body, method="PUT")
+        return send(request, self._timeout)
+
 
 def request_ids() -> Iterator[int]:
     """Count JSON-RPC request IDs from 1.
@@ -169,27 +194,6 @@ def check_status(reply: Reply, expected: int) -> None:
         raise AuthError(reply.body.decode("utf-8", "replace"))
     if reply.status != expected:
         raise HTTPStatusError(reply.status, reply.body.decode("utf-8", "replace"))
-
-
-def stream_messages(body: str) -> Sequence[Mapping[str, object]]:
-    """Parse a server-sent-events body into its JSON-RPC messages.
-
-    Args:
-        body: The body.
-
-    Returns:
-        Each event's data, decoded, in order.
-    """
-    messages = []
-    for block in body.replace("\r\n", "\n").split("\n\n"):
-        data = [
-            line.removeprefix("data:").removeprefix(" ")
-            for line in block.split("\n")
-            if line.startswith("data:")
-        ]
-        if data:
-            messages.append(jsonshape.as_dict(jsonshape.loads("\n".join(data))))
-    return messages
 
 
 def response_message(reply: Reply) -> Mapping[str, object]:

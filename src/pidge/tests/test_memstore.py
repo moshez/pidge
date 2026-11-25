@@ -59,8 +59,11 @@ class TestMemoryStore(unittest.TestCase):
 
     def test_presign(self) -> None:
         """Presigned URLs describe the request."""
-        assert_that(self.store.presign("k", "f.pdf"), equal_to(""))
-        self.store.put("k", b"")
         assert_that(
-            self.store.presign("k", "f.pdf"), equal_to("memory:k?filename=f.pdf")
+            self.store.presign("k", "f.pdf", 60),
+            equal_to("memory:k?filename=f.pdf&expires=60"),
+        )
+        assert_that(
+            self.store.presign_upload("u", 3, 60),
+            equal_to("memory:u?size=3&expires=60"),
         )
