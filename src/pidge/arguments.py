@@ -1,9 +1,11 @@
 """Validation of MCP tool arguments."""
 
+import base64
 import datetime
 from collections.abc import Callable, Mapping, Sequence
 
 from . import jsonvalue, ulid
+from .ordering import Position
 
 
 class ToolError(Exception):
@@ -162,3 +164,68 @@ def date(args: Mapping[str, object], name: str) -> int:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=datetime.UTC)
     return int(parsed.timestamp())
+
+
+def choice[T](
+    args: Mapping[str, object], name: str, options: Mapping[str, T], default: T
+) -> T:
+    """Read an optional argument that must be one of a few strings.
+
+    Args:
+        args: The arguments.
+        name: The argument name.
+        options: The allowed strings and what each one means.
+        default: The meaning when the argument is absent.
+
+    Returns:
+        The meaning of the value.
+
+    Raises:
+        ToolError: If the value is not one of the options.
+    """
+    value = text(args, name)
+    if not value:
+        return default
+    if value in options:
+        return options[value]
+    raise ToolError(f"{name} must be one of {', '.join(options)}")
+
+
+def encode_cursor(position: Position) -> str:
+    """Encode a search position as an opaque cursor.
+
+    Args:
+        position: The last hit returned.
+
+    Returns:
+        The base64url of ``{date}:{ulid}``.
+    """
+    plain = f"{position.date}:{position.ulid}"
+    return base64.urlsafe_b64encode(plain.encode()).decode()
+
+
+def cursor(args: Mapping[str, object], name: str) -> Position | None:
+    """Read an optional search cursor argument.
+
+    Args:
+        args: The arguments.
+        name: The argument name.
+
+    Returns:
+        The last hit already seen, or None.
+
+    Raises:
+        ToolError: If the value is not a cursor from a previous search.
+    """
+    value = text(args, name)
+    if not value:
+        return None
+    try:
+        decoded = base64.b64decode(value, altchars=b"-_", validate=True)
+        when, _, last = decoded.decode("ascii").partition(":")
+        position = Position(date=int(when), ulid=last)
+    except ValueError:
+        raise ToolError(f"{name} is malformed") from None
+    if not ulid.is_ulid(last):
+        raise ToolError(f"{name} is malformed")
+    return position

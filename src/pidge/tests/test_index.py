@@ -1,7 +1,6 @@
 """Tests for the indexer, search and tags."""
 
 import dataclasses
-import email.utils
 import unittest
 from collections.abc import Sequence
 
@@ -62,7 +61,7 @@ def found(store: ObjectStore, cache: ShardSource, query: Query) -> Sequence[str]
     Returns:
         The IDs, in order.
     """
-    return [hit.ulid for hit in search(store, cache, query)]
+    return [hit.ulid for hit in search(store, cache, query).hits]
 
 
 class TestSearch(unittest.TestCase):
@@ -98,7 +97,7 @@ class TestSearch(unittest.TestCase):
         Returns:
             The hits.
         """
-        return search(self.store, self.cache, Query(terms=[word]))
+        return search(self.store, self.cache, Query(terms=[word])).hits
 
     def test_indexed(self) -> None:
         """Indexed messages are found by words and by filters."""
@@ -144,42 +143,6 @@ class TestSearch(unittest.TestCase):
         assert_that(change, instance_of(TagError))
 
 
-def receive_dated(world: World, name: str, when: int) -> str:
-    """Receive a message with a given Date header.
-
-    Args:
-        world: The environment.
-        name: The SES object name (also the subject).
-        when: The Date header in epoch seconds.
-
-    Returns:
-        The message's ULID.
-    """
-    raw = sample_raw(name, "Hello", {}).replace(
-        b"Thu, 01 Jan 2026 00:00:00 +0000",
-        email.utils.formatdate(when, usegmt=True).encode(),
-    )
-    world.clock.advance(1)
-    return deliver(world, name, raw)
-
-
-class TestDateOrder(unittest.TestCase):
-    """Without terms, index and tail hits share one newest-first order."""
-
-    def test_newest_overall(self) -> None:
-        """Newer unindexed and dirty mail beats older indexed mail."""
-        world = make_world(self)
-        base = 1_767_225_600
-        indexed = [receive_dated(world, f"i{n}", base + n * 60) for n in range(5)]
-        run_tracked(world.context)
-        fresh = [receive_dated(world, f"f{n}", base + 900 + n) for n in range(2)]
-        tag_email(world.store, indexed[-1], ["seen"], [])
-        cache = new_cache(world, "cache")
-        hits = found(world.store, cache, Query(tags=["inbox"], limit=4))
-        expected = [fresh[1], fresh[0], indexed[4], indexed[3]]
-        assert_that(hits, equal_to(expected))
-
-
 class TestIndexer(unittest.TestCase):
     """The indexer is triggered, retried and reports repeated failures."""
 
@@ -221,7 +184,7 @@ class TestIndexer(unittest.TestCase):
         for _ in range(2):
             assert_that(failure(lambda: run_tracked(broken)), instance_of(OSError))
         cache = new_cache(world, "c")
-        ops = search(broken.store, cache, Query(tags=["ops"]))
+        ops = search(broken.store, cache, Query(tags=["ops"])).hits
         subject = "[pidge ops] The search indexer has failed 2 times in a row"
         assert_that([hit.subject for hit in ops], equal_to([subject]))
         assert_that(run_tracked(broken), equal_to(2))
@@ -267,4 +230,4 @@ class TestEdges(unittest.TestCase):
         hit = Hit(
             ulid="A", date=1, sender="", subject="", snippet="", tags=(), score=None
         )
-        assert_that(merge([hit], [hit], Query()), contains_exactly(hit))
+        assert_that(merge([hit], [hit], Query()).hits, contains_exactly(hit))

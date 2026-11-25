@@ -11,6 +11,7 @@ from .docstore import LIST_LIMIT, marker_id, shard_keys, tail_docs
 from .ports import ShardSource
 from .records import DIRTY
 from .documents import Hit, Query, matches, tail_hit
+from .ordering import by_date
 from .shard import search_shard
 from .store import NotFound, NotModified, ObjectStore
 
@@ -113,7 +114,20 @@ def unique(hits: Iterable[Hit]) -> Sequence[Hit]:
     return kept
 
 
-def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[Hit]:
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Page:
+    """One page of search results.
+
+    Attributes:
+        hits: The hits, at most the query's limit.
+        more: Whether more hits matched than were returned.
+    """
+
+    hits: Sequence[Hit]
+    more: bool
+
+
+def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Page:
     """Combine index hits and tail hits.
 
     Args:
@@ -122,20 +136,20 @@ def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[
         query: The query (for ordering and the limit).
 
     Returns:
-        With terms, ranked index hits by score, then tail hits by date.
-        Without terms, all hits in one newest-first order. Either way without
-        duplicates (the tail copy wins) and cut to the limit.
+        In relevance order, ranked index hits by score, then tail hits by
+        date. In date order, all hits in one newest-first order. Either way
+        without duplicates (the tail copy wins) and cut to the limit.
     """
     tail_hits = list(tail)
-    if query.terms:
+    if by_date(query.order, query.terms):
+        merged = unique(newest_first([*tail_hits, *ranked]))
+    else:
         first = sorted(ranked, key=lambda hit: hit.score or 0.0)
         merged = unique([*first, *newest_first(tail_hits)])
-    else:
-        merged = unique(newest_first([*tail_hits, *ranked]))
-    return merged[: query.limit]
+    return Page(hits=merged[: query.limit], more=len(merged) > query.limit)
 
 
-def search(store: ObjectStore, cache: ShardSource, query: Query) -> Sequence[Hit]:
+def search(store: ObjectStore, cache: ShardSource, query: Query) -> Page:
     """Search the mailbox.
 
     Args:
@@ -144,7 +158,7 @@ def search(store: ObjectStore, cache: ShardSource, query: Query) -> Sequence[Hit
         query: The query.
 
     Returns:
-        The hits.
+        A page of hits.
     """
     tail = tail_docs(store)
     exclude = set(tail) | {

@@ -14,6 +14,7 @@ from .documents import (
     attachment_names,
     doc_date,
 )
+from .ordering import by_date
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -175,6 +176,9 @@ def filter_clauses(query: Query) -> Sequence[Clause]:
     clauses.extend((tag_filter, [name]) for name in query.tags)
     if query.has_attachments is not None:
         clauses.append(("m.has_attachments = ?", [int(query.has_attachments)]))
+    if query.cursor is not None:
+        position = [query.cursor.date, query.cursor.date, query.cursor.ulid]
+        clauses.append(("(m.date < ? OR (m.date = ? AND m.id < ?))", position))
     return clauses
 
 
@@ -197,6 +201,27 @@ def where_clause(query: Query, exclude: Collection[str]) -> Clause:
     return sql, [param for _, group in clauses for param in group]
 
 
+def result_columns(query: Query) -> tuple[str, str, str]:
+    """Choose the snippet, score and ordering SQL for a query.
+
+    Args:
+        query: The query.
+
+    Returns:
+        The snippet and score expressions and the ORDER BY clause. The
+        snippet highlights the terms whenever there are some; hits are
+        scored and ranked only in relevance order.
+    """
+    snippet = (
+        "snippet(fts, 3, '[', ']', '...', 12)"
+        if query.terms
+        else f"substr(fts.body, 1, {SNIPPET_CHARS})"
+    )
+    if by_date(query.order, query.terms):
+        return snippet, "NULL", "m.date DESC, m.id DESC"
+    return snippet, "bm25(fts)", "bm25(fts)"
+
+
 def search_shard(
     connection: sqlite3.Connection, query: Query, exclude: Collection[str]
 ) -> Sequence[Hit]:
@@ -208,22 +233,17 @@ def search_shard(
         exclude: Message IDs to leave out.
 
     Returns:
-        Ranked hits when the query has terms, else hits by date.
+        Up to one more than the limit (so the caller can tell whether there is
+        another page): ranked hits in relevance order with terms, else hits by
+        date.
     """
     where, params = where_clause(query, exclude)
-    ranked = bool(query.terms)
-    snippet = (
-        "snippet(fts, 3, '[', ']', '...', 12)"
-        if ranked
-        else f"substr(fts.body, 1, {SNIPPET_CHARS})"
-    )
-    score = "bm25(fts)" if ranked else "NULL"
-    order = "bm25(fts)" if ranked else "m.date DESC, m.id DESC"
+    snippet, score, order = result_columns(query)
     rows = connection.execute(
         f"SELECT m.id, m.date, m.from_addr, m.subject, {snippet}, m.tags, {score}"
         " FROM messages m JOIN fts ON fts.rowid = m.rowid"
         f" WHERE {where} ORDER BY {order} LIMIT ?",
-        (*params, query.limit),
+        (*params, query.limit + 1),
     ).fetchall()
     return [row_hit(row) for row in rows]
 

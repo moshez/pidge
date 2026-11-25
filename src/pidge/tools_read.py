@@ -4,13 +4,15 @@ from collections.abc import Mapping
 
 from . import arguments, jsonvalue
 from .documents import Hit, Query, words
+from .ordering import Order, Position
 from .records import attachment_key, read_meta, read_record
-from .search import search
+from .search import Page, search
 from .store import NotFound, ObjectStore
 from .tagging import list_tags
 from .toolkit import MESSAGE_ID, TEXT, TEXT_LIST, Services, Tool, ToolError, schema
 
 MAX_RESULTS = 100
+ORDERS = {order.name.lower(): order for order in Order}
 
 
 def hit_json(hit: Hit) -> Mapping[str, object]:
@@ -33,6 +35,70 @@ def hit_json(hit: Hit) -> Mapping[str, object]:
     }
 
 
+def search_order(
+    args: Mapping[str, object], default: Order
+) -> tuple[Order, Position | None]:
+    """Read the ``search`` tool's order and cursor.
+
+    Args:
+        args: The tool arguments.
+        default: The order when none is given.
+
+    Returns:
+        The order, and the cursor if one was given.
+
+    Raises:
+        ToolError: If a cursor is given for relevance order.
+    """
+    order = arguments.choice(args, "order", ORDERS, default)
+    cursor = arguments.cursor(args, "cursor")
+    if cursor is not None and order is not Order.DATE:
+        raise ToolError("cursor only works with order 'date'")
+    return order, cursor
+
+
+def search_query(args: Mapping[str, object]) -> Query:
+    """Build a query from the ``search`` tool's arguments.
+
+    Args:
+        args: The tool arguments.
+
+    Returns:
+        The query.
+    """
+    terms = words(arguments.text(args, "query"))
+    order, cursor = search_order(args, Order.RELEVANCE if terms else Order.DATE)
+    return Query(
+        terms=terms,
+        sender=arguments.text(args, "from"),
+        recipient=arguments.text(args, "to"),
+        after=arguments.date(args, "after"),
+        before=arguments.date(args, "before"),
+        tags=arguments.strings(args, "tags"),
+        has_attachments=arguments.flag(args, "has_attachments"),
+        limit=arguments.bounded(args, "limit", MAX_RESULTS),
+        order=order,
+        cursor=cursor,
+    )
+
+
+def page_json(query: Query, page: Page) -> Mapping[str, object]:
+    """Describe a page of results.
+
+    Args:
+        query: The query.
+        page: The page.
+
+    Returns:
+        The hits, and a cursor for the next page in date order (else null).
+    """
+    next_cursor = None
+    if query.order is Order.DATE and page.more:
+        last = page.hits[-1]
+        next_cursor = arguments.encode_cursor(Position(date=last.date, ulid=last.ulid))
+    return dict(results=[hit_json(hit) for hit in page.hits], next_cursor=next_cursor)
+
+
 def run_search(services: Services, args: Mapping[str, object]) -> object:
     """Search messages.
 
@@ -41,20 +107,10 @@ def run_search(services: Services, args: Mapping[str, object]) -> object:
         args: The tool arguments.
 
     Returns:
-        The results.
+        The results, and a cursor for the next page in date order.
     """
-    query = Query(
-        terms=words(arguments.text(args, "query")),
-        sender=arguments.text(args, "from"),
-        recipient=arguments.text(args, "to"),
-        after=arguments.date(args, "after"),
-        before=arguments.date(args, "before"),
-        tags=arguments.strings(args, "tags"),
-        has_attachments=arguments.flag(args, "has_attachments"),
-        limit=arguments.bounded(args, "limit", MAX_RESULTS),
-    )
-    hits = search(services.context.store, services.cache, query)
-    return dict(results=[hit_json(hit) for hit in hits])
+    query = search_query(args)
+    return page_json(query, search(services.context.store, services.cache, query))
 
 
 def read_message(store: ObjectStore, ulid: str) -> Mapping[str, object]:
@@ -140,7 +196,11 @@ SEARCH = Tool(
         "Search the mailbox. All query words must match (subject, addresses, "
         "body, attachment names). Filters combine with AND. Dates are ISO "
         "8601. Use tags=['inbox'] for the inbox, ['outbox'] for queued or "
-        "stuck mail, ['ops'] for operational problems."
+        "stuck mail, ['ops'] for operational problems. Results are ranked by "
+        "relevance when there are query words, else newest first; "
+        "order='date' lists newest first anyway. In date order, pass "
+        "next_cursor back as cursor (with the same other arguments) for the "
+        "next page; it is null on the last page."
     ),
     schema=schema(
         {
@@ -152,6 +212,11 @@ SEARCH = Tool(
             "tags": TEXT_LIST,
             "has_attachments": {"type": "boolean"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            "order": {"type": "string", "enum": ["date", "relevance"]},
+            "cursor": {
+                "type": "string",
+                "description": "next_cursor from a previous date-order search.",
+            },
         },
         [],
     ),
