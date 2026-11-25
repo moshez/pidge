@@ -6,7 +6,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from . import calls
 from .calls import SearchArgs
 from .models import Hit, Message
-from .transport import HTTPStatusError, Session
+from .transport import Session, check_status
 
 BODY_KIND = "body"
 PAGE_SIZE = 100
@@ -62,17 +62,14 @@ def fetch_body_html(session: Session, message: Message) -> str | None:
         message: The message.
 
     Returns:
-        The HTML, or None if the message has no HTML body.
-
-    Raises:
-        HTTPStatusError: If the download fails.
+        The HTML, or None if the message has no HTML body. A failed
+        download raises HTTPStatusError.
     """
     name = body_part(message)
     if name is None:
         return None
     reply = session.transport.get(calls.get_attachment(session, message.id, name))
-    if reply.status != 200:
-        raise HTTPStatusError(reply.status, reply.body.decode("utf-8", "replace"))
+    check_status(reply, 200)
     return reply.body.decode("utf-8", "replace")
 
 

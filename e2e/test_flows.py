@@ -22,6 +22,7 @@ from hamcrest import (
     empty,
     equal_to,
     has_item,
+    has_key,
     has_length,
     is_not,
     starts_with,
@@ -29,6 +30,7 @@ from hamcrest import (
 
 from .harness import (
     BUCKET,
+    BUILD,
     CONTAINER_HOST,
     DOMAIN,
     FROM_ADDRESS,
@@ -190,6 +192,32 @@ class TestFunctionUrl(EndToEnd):
         _, _, reply = self.stack.http("POST", "/mcp", bad, self.stack.emulator.token())
         assert isinstance(reply, dict)
         assert_that(reply["error"]["code"], equal_to(-32601))
+
+    def test_no_sessions(self) -> None:
+        """initialize names the build and sets no session; session IDs are ignored."""
+        token = self.stack.emulator.token()
+        init = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        }
+        status, headers, reply = self.stack.http("POST", "/mcp", init, token)
+        assert_that(status, equal_to(200))
+        assert_that("mcp-session-id" in {k.lower() for k in headers}, equal_to(False))
+        assert isinstance(reply, dict)
+        assert_that(reply["result"]["serverInfo"]["version"], equal_to(BUILD))
+        listing = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+        for session_id in [None, "random-0123456789", f"stale.{'A' * 22}"]:
+            with self.subTest(session_id):
+                status, _, reply = self.stack.http(
+                    "POST", "/mcp", listing, token, session_id
+                )
+                assert_that(status, equal_to(200))
+                assert isinstance(reply, dict)
+                assert_that(reply, has_key("result"))
+        status = self.stack.http("DELETE", "/mcp", None, token, "x")[0]
+        assert_that(status, equal_to(405))
 
     def test_session_token(self) -> None:
         """A session token works like an OAuth one until it expires."""

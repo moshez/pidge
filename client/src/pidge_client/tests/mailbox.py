@@ -52,11 +52,14 @@ class InProcess:
             body: The request body.
 
         Returns:
-            401 for a wrong token, else the JSON-RPC response.
+            401 for a wrong token, 202 for a notification, else the JSON-RPC
+            response.
         """
         if headers.get("Authorization") != f"Bearer {self.token}":
             return Reply(status=401, body=b'{"error": "invalid_token"}')
         response = handle_rpc(self.services, TOOLS, body)
+        if response is None:
+            return Reply(status=202, body=b"")
         return Reply(status=200, body=json.dumps(response).encode())
 
     def get(self, url: str) -> Reply:

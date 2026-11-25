@@ -50,6 +50,7 @@ FUNCTION_HOST = "abc123.lambda-url.us-east-2.on.aws"
 RESOURCE = f"https://{FUNCTION_HOST}/mcp"
 SCOPE = f"{RESOURCE}/full"
 SESSION_KEY_PARAMETER = "/pidge/session-signing-key"
+BUILD = "e2e0build"
 KILL_SWITCH_TOPIC = "arn:aws:sns:us-east-2:123456789012:budget-killswitch"
 MOTO_IMAGE = os.environ.get("MOTO_IMAGE", "motoserver/moto:5.2.5")
 CONTAINER_HOST = "host.docker.internal"
@@ -412,6 +413,7 @@ class Stack:
             ISSUER=self.emulator.issuer,
             USER_POOL_ID="us-east-2_e2e",
             SESSION_KEY_PARAMETER=SESSION_KEY_PARAMETER,
+            PIDGE_BUILD=BUILD,
             KILL_SWITCH_TOPIC_ARN=KILL_SWITCH_TOPIC,
             LD_PRELOAD="/e2e/libfaketime.so.1",
             FAKETIME_TIMESTAMP_FILE="/e2e/faketime/now",
@@ -619,10 +621,13 @@ class Stack:
         path: str,
         body: object = None,
         token: str | None = None,
+        session_id: str | None = None,
     ) -> tuple[int, Mapping[str, str], object]:
         headers = {"content-type": "application/json"}
         if token is not None:
             headers["authorization"] = f"Bearer {token}"
+        if session_id is not None:
+            headers["mcp-session-id"] = session_id
         event = {
             "version": "2.0",
             "rawPath": path,

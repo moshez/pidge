@@ -21,6 +21,12 @@ variable "image_uri" {
   type        = string
 }
 
+variable "build" {
+  description = "The git SHA being deployed. The Lambda gets it as PIDGE_BUILD and logs it on every MCP initialize, so logs show which build a client connected to."
+  type        = string
+  default     = "dev"
+}
+
 variable "image_digest" {
   description = "The image digest to deploy (sha256:...). Pinning by digest updates the function on every new image."
   type        = string

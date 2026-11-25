@@ -49,14 +49,17 @@ def initialize(
         params: The request parameters.
 
     Returns:
-        The server's capabilities.
+        The server's capabilities, with the build as ``serverInfo.version``.
     """
     requested = jsonvalue.get_str(params, "protocolVersion")
     version = requested if requested in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0]
+    build = services.build
+    record = dict(mcp="initialize", build=build.name, client=params.get("clientInfo"))
+    build.log(json.dumps(record, sort_keys=True))
     return {
         "protocolVersion": version,
         "capabilities": {"tools": {"listChanged": False}},
-        "serverInfo": {"name": "pidge", "version": "1"},
+        "serverInfo": {"name": "pidge", "version": build.name},
         "instructions": INSTRUCTIONS,
     }
 

@@ -119,6 +119,8 @@ resource "aws_lambda_function" "pidge" {
       USER_POOL_ID      = aws_cognito_user_pool.pidge.id
       # sessions.py: SSM SecureString with the session-token signing key.
       SESSION_KEY_PARAMETER = aws_ssm_parameter.session_key.name
+      # mcp.py: logged on every MCP initialize.
+      PIDGE_BUILD = var.build
       # budget.tf: SNS records from this topic trip the kill switch.
       KILL_SWITCH_TOPIC_ARN = aws_sns_topic.killswitch.arn
     }

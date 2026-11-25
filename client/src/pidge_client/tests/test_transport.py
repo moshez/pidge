@@ -109,10 +109,10 @@ class TestSession(unittest.TestCase):
         assert_that(caught.exception.args, equal_to((502, "bad gateway")))
 
     def test_request_ids_increase(self) -> None:
-        """Each request gets the next ID."""
+        """Each request gets the next ID, after initialize's."""
         session = empty_mailbox(self).session
         rpc(session, "ping", {})
-        assert_that(next(session.ids), equal_to(2))
+        assert_that(next(session.ids), equal_to(3))
 
     def test_list_tools(self) -> None:
         """tools/list returns the tool descriptions."""

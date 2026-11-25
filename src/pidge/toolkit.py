@@ -7,7 +7,7 @@ from typing import Protocol
 from .arguments import ToolError
 from .ports import Context, ShardSource
 
-__all__ = ["Run", "Secret", "Services", "Tool", "ToolError", "schema"]
+__all__ = ["Build", "Run", "Secret", "Services", "Tool", "ToolError", "schema"]
 
 
 class Secret(Protocol):
@@ -21,6 +21,30 @@ class Secret(Protocol):
         """
 
 
+def quiet(line: str) -> None:
+    """Discard a log line.
+
+    Args:
+        line: The line.
+    """
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Build:
+    """Which deploy is running, and where to say so.
+
+    Attributes:
+        name: The deployed git SHA (``PIDGE_BUILD``), or ``dev``.
+        log: Writes one log line.
+    """
+
+    name: str
+    log: Callable[[str], None]
+
+
+DEV_BUILD = Build(name="dev", log=quiet)
+
+
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class Services:
     """What the tools run against.
@@ -29,12 +53,14 @@ class Services:
         context: The flow context.
         cache: The local shard cache.
         session_key: Signs and checks session tokens.
+        build: The running build, logged on each ``initialize``.
         endpoint: The MCP endpoint URL of the current request (set per request).
     """
 
     context: Context
     cache: ShardSource
     session_key: Secret
+    build: Build = DEV_BUILD
     endpoint: str = ""
 
 

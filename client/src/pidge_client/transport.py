@@ -1,4 +1,9 @@
-"""Send JSON-RPC ``tools/call`` requests to a pidge MCP endpoint."""
+"""Send JSON-RPC ``tools/call`` requests to a pidge MCP endpoint.
+
+A ``Session`` sends ``initialize`` (and ``notifications/initialized``)
+before its first request. pidge keeps no MCP sessions, so there is no
+session ID to keep.
+"""
 
 import dataclasses
 import itertools
@@ -12,6 +17,7 @@ from . import jsonshape
 
 PROTOCOL_VERSION = "2025-11-25"
 TIMEOUT = 60.0
+CLIENT_INFO = {"name": "pidge_client", "version": "1"}
 
 
 class ToolError(Exception):
@@ -145,6 +151,23 @@ def request_ids() -> Iterator[int]:
     return itertools.count(1)
 
 
+def check_status(reply: Reply, expected: int) -> None:
+    """Check an HTTP reply's status.
+
+    Args:
+        reply: The HTTP reply.
+        expected: The status that means success.
+
+    Raises:
+        AuthError: On HTTP 401.
+        HTTPStatusError: On any other unexpected status (404 included).
+    """
+    if reply.status == 401:
+        raise AuthError(reply.body.decode("utf-8", "replace"))
+    if reply.status != expected:
+        raise HTTPStatusError(reply.status, reply.body.decode("utf-8", "replace"))
+
+
 def rpc_result(reply: Reply) -> Mapping[str, object]:
     """Check an HTTP reply to a JSON-RPC request and return its result.
 
@@ -155,14 +178,9 @@ def rpc_result(reply: Reply) -> Mapping[str, object]:
         The JSON-RPC result.
 
     Raises:
-        AuthError: On HTTP 401.
-        HTTPStatusError: On any other non-200 status.
         RpcError: On a JSON-RPC error response.
     """
-    if reply.status == 401:
-        raise AuthError(reply.body.decode("utf-8", "replace"))
-    if reply.status != 200:
-        raise HTTPStatusError(reply.status, reply.body.decode("utf-8", "replace"))
+    check_status(reply, 200)
     message = jsonshape.as_dict(jsonshape.loads(reply.body))
     if "error" in message:
         error = jsonshape.as_dict(message["error"])
@@ -193,6 +211,18 @@ def tool_content(result: Mapping[str, object]) -> Mapping[str, object]:
     return jsonshape.as_dict(result.get("structuredContent"))
 
 
+# Mutable on purpose: it records, across requests, that initialize was sent.
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Handshake:  # noqa: SLD501
+    """Whether a Session has initialized: its only mutable part.
+
+    Attributes:
+        done: True once ``initialize`` succeeded.
+    """
+
+    done: bool = False
+
+
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class Session:
     """A pidge MCP endpoint and a bearer token for it.
@@ -202,18 +232,40 @@ class Session:
         token: The bearer token.
         transport: How requests travel (default: urllib).
         ids: Supplies JSON-RPC request IDs.
+        handshake: Whether ``initialize`` has been sent.
     """
 
     endpoint: str
     token: str
     transport: Transport = dataclasses.field(default_factory=UrllibTransport.create)
     ids: Iterator[int] = dataclasses.field(default_factory=request_ids)
+    handshake: Handshake = dataclasses.field(default_factory=Handshake)
 
 
-def rpc(
+def post(session: Session, message: Mapping[str, object]) -> Reply:
+    """POST one JSON-RPC message.
+
+    Args:
+        session: The session.
+        message: The message.
+
+    Returns:
+        The HTTP reply.
+    """
+    headers = {
+        "Authorization": f"Bearer {session.token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": PROTOCOL_VERSION,
+    }
+    body = json.dumps(message).encode("utf-8")
+    return session.transport.post(session.endpoint, headers, body)
+
+
+def request(
     session: Session, method: str, params: Mapping[str, object]
 ) -> Mapping[str, object]:
-    """Make a JSON-RPC request.
+    """Send one JSON-RPC request.
 
     Args:
         session: The session.
@@ -224,14 +276,44 @@ def rpc(
         The result.
     """
     message = dict(jsonrpc="2.0", id=next(session.ids), method=method, params=params)
-    headers = {
-        "Authorization": f"Bearer {session.token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": PROTOCOL_VERSION,
-    }
-    body = json.dumps(message).encode("utf-8")
-    return rpc_result(session.transport.post(session.endpoint, headers, body))
+    return rpc_result(post(session, message))
+
+
+def initialize(session: Session) -> Mapping[str, object]:
+    """Send ``initialize`` and ``notifications/initialized``.
+
+    Args:
+        session: The session.
+
+    Returns:
+        The ``initialize`` result.
+    """
+    params = dict(
+        protocolVersion=PROTOCOL_VERSION, capabilities={}, clientInfo=CLIENT_INFO
+    )
+    result = request(session, "initialize", params)
+    reply = post(session, dict(jsonrpc="2.0", method="notifications/initialized"))
+    check_status(reply, 202)
+    session.handshake.done = True
+    return result
+
+
+def rpc(
+    session: Session, method: str, params: Mapping[str, object]
+) -> Mapping[str, object]:
+    """Make a JSON-RPC request, initializing first if the session is new.
+
+    Args:
+        session: The session.
+        method: The method.
+        params: The parameters.
+
+    Returns:
+        The result.
+    """
+    if not session.handshake.done:
+        initialize(session)
+    return request(session, method, params)
 
 
 def call_tool(
