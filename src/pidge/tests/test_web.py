@@ -185,6 +185,15 @@ class TestTools(unittest.TestCase):
             ("get_attachment", {"id": self.original, "name": "0"}, "no attachment"),
             ("get_attachment", {"id": missing, "name": "x"}, "no attachment"),
             ("tag_email", {"id": missing, "add": ["x"]}, "no message"),
+            (
+                "send_email",
+                {
+                    "to": ["a@example.com"],
+                    "subject": "x",
+                    "attach_from": [{"id": self.original, "name": "9-nope.pdf"}],
+                },
+                "no attachment '9-nope.pdf'",
+            ),
         ]
         for name, args, prefix in cases:
             assert_that(self.fails(name, args), starts_with(prefix))
