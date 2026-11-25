@@ -8,7 +8,8 @@ from pidge.tests.mcpclient import TOOLS
 
 from .. import calls
 from ..jsonshape import ShapeError
-from ..transport import Reply, Session, response_message, stream_messages
+from ..events import stream_messages
+from ..transport import Reply, Session, response_message
 from .mailbox import empty_mailbox, http_server
 
 STREAM = {"content-type": "text/event-stream"}

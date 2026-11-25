@@ -12,6 +12,8 @@ from .tagging import list_tags
 from .toolkit import MESSAGE_ID, TEXT, TEXT_LIST, Services, Tool, ToolError, schema
 
 MAX_RESULTS = 100
+DOWNLOAD_SECONDS = 15 * 60
+MAX_DOWNLOAD_SECONDS = 8 * 60 * 60
 ORDERS = {order.name.lower(): order for order in Order}
 
 
@@ -163,18 +165,23 @@ def run_get_attachment(services: Services, args: Mapping[str, object]) -> object
         args: The tool arguments.
 
     Returns:
-        The presigned URL.
+        The presigned URL and how many seconds it works for.
 
     Raises:
         ToolError: If there is no such attachment.
     """
     ulid = arguments.message_id(args, "id")
     name = arguments.required_text(args, "name")
+    seconds = arguments.bounded(
+        args, "duration", MAX_DOWNLOAD_SECONDS, DOWNLOAD_SECONDS
+    )
     store = services.context.store
     key = attachment_key(ulid, name)
-    if not store.list(key, 1) or store.list(key, 1)[0].key != key:
+    listed = store.list(key, 1)
+    if not listed or listed[0].key != key:
         raise ToolError(f"no attachment {name!r} on {ulid}")
-    return dict(url=store.presign(key, name.partition("-")[2] or name))
+    url = store.presign(key, name.partition("-")[2] or name, seconds)
+    return dict(url=url, expires_in=seconds)
 
 
 def run_list_tags(services: Services, args: Mapping[str, object]) -> object:
@@ -234,8 +241,24 @@ GET_MESSAGE = Tool(
 
 GET_ATTACHMENT = Tool(
     name="get_attachment",
-    description="Get a short-lived download URL for an attachment.",
-    schema=schema({"id": MESSAGE_ID, "name": TEXT}, ["id", "name"]),
+    description=(
+        "Get a download URL for an attachment (a plain GET, no Authorization "
+        "header). It works for duration seconds: 900 (15 minutes) by "
+        "default, at most 28800 (8 hours)."
+    ),
+    schema=schema(
+        {
+            "id": MESSAGE_ID,
+            "name": TEXT,
+            "duration": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_DOWNLOAD_SECONDS,
+                "description": "Seconds the URL works for (default 900).",
+            },
+        },
+        ["id", "name"],
+    ),
     run=run_get_attachment,
 )
 

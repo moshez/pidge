@@ -84,6 +84,9 @@ outbox/{ulid}/message.eml              MIME to send
 unindexed/{ulid}                       zero-byte marker: message not yet in the index
 dirty/{ulid}                           zero-byte marker: meta changed since last index
 index/index-{yyyy}.db                  SQLite FTS5 shards, one per year
+uploads/{ulid}/meta.json               put_attachment: name, content_type, size
+uploads/{ulid}/data                    the uploaded bytes, PUT through the
+                                       presigned URL (expire after 7 days)
 ```
 
 - **IDs** are ULIDs, so keys sort by time and the tail scan can list in order.
@@ -108,6 +111,8 @@ Three kinds of objects are duplicates or history once their job is done:
 | Noncurrent versions (whole bucket) | Versioning keeps every overwritten version | Every CAS write (`meta.json`, `state.json`) and every index shard rewrite leaves an old version | Expire noncurrent versions after **7 days** |
 
 The last row matters most. Without it, every batch run keeps a full copy of the old shard, so stored bytes grow with (shard size × number of runs) instead of with mail volume.
+
+`uploads/` expires after **7 days**: `send_email` copies an upload into the outgoing MIME (and so into `msgs/`) when it queues the message, so the upload itself is only needed until then.
 
 `msgs/` and `index/` current versions are never expired.
 
@@ -273,14 +278,17 @@ Results are ranked with FTS5's built-in `bm25()`.
 |---|---|---|
 | `search` | `query`, `from?`, `to?`, `after?`, `before?`, `tags?`, `has_attachments?`, `limit?`, `order?` (`date` or `relevance`; default `relevance` with terms, else `date`), `cursor?` (date order only) | `results`: list of `{id, date, from, subject, snippet, tags, ranked}`; `next_cursor`: string for the next date-order page, or `null` (§6.3) |
 | `get_message` | `id` | headers, body text, attachment list, tags. The attachment list (`headers.attachments`) has `{name, content_type, size, kind}` for every file under `attachments/`: `0-body.html` (kind `body`) first when the message has an HTML body, then attachments (`attachment`), then inline parts (`inline`) |
-| `get_attachment` | `id`, `name` | short-lived presigned S3 URL. Bytes would hit Lambda's response-size limit. Works for any listed name, `0-body.html` included |
-| `send_email` | `to`, `cc?`, `bcc?`, `subject`, `body`, `in_reply_to_id?`, `from?` (sender under `mail_domain`), `attach_from?` (existing attachment refs) | outbox ID |
+| `get_attachment` | `id`, `name`, `duration?` (seconds, 1 to 28800; default 900) | `{url, expires_in}`: a presigned S3 GET URL that works for `duration` seconds. Bytes would hit Lambda's response-size limit. Works for any listed name, `0-body.html` included |
+| `put_attachment` | `name`, `size` (bytes, at most 25 MiB), `content_type?` (default `application/octet-stream`) | `{upload_id, url, method: "PUT", size, expires_in: 900}`. The URL is a presigned PutObject with `Content-Length` among the signed headers, so S3 refuses a body of any other size. The metadata goes to `uploads/{ulid}/meta.json` at once; the client PUTs the bytes to `uploads/{ulid}/data` |
+| `send_email` | `to`, `cc?`, `bcc?`, `subject`, `body`, `in_reply_to_id?`, `from?` (sender under `mail_domain`), `attach_from?`: `{id, name}` copies an attachment of a stored message, `{upload}` attaches a `put_attachment` upload (an error if its bytes were never PUT) | outbox ID |
 | `tag_email` | `id`, `add?`, `remove?` | new tag set |
 | `list_tags` | — | tags with counts |
 | `get_session_token` | — | `{token, expires_at, endpoint}`: a 5-minute bearer token for scripts (§9.3) |
 | `refresh_tools` | — | `{tools: [{name, summary}], build}`, answered over SSE after a `notifications/tools/list_changed` (§8.1) |
 
 To see what's queued or stuck, search for `tags=["outbox"]`.
+
+**Presigned URL signing.** A presigned URL stops working when the credentials that signed it expire, whatever its `X-Amz-Expires` says ([AWS](https://repost.aws/knowledge-center/presigned-url-s3-bucket-expiration)), and the Lambda role's session credentials can expire well within 8 hours. So every presigned URL is signed with the long-term access key of a dedicated IAM user, `pidge-url-signer`, whose only permissions are `s3:GetObject` on `msgs/*/attachments/*` and `s3:PutObject` on `uploads/*/data`. Terraform creates the key; the Lambda gets the key ID as `SIGNER_KEY_ID` and reads the secret from the SSM SecureString `/pidge/url-signer-secret` on first use (`awsclients.KeyedSigner`). Rotating the key changes `SIGNER_KEY_ID`, which restarts every instance.
 
 ### 8.3 The client (`client/`, `pidge_client`)
 
@@ -397,6 +405,7 @@ Applied once from a laptop with admin credentials. Local state is fine, or migra
   - Function URL.
   - `aws_lambda_permission` for S3 and EventBridge.
   - The session-token signing key (`random_password` → SSM SecureString, §9.3).
+  - The `pidge-url-signer` IAM user, its access key, and the key's secret in SSM (§8.2).
 - **SES:**
   - Domain identity plus `aws_ses_domain_dkim`.
   - Optional MAIL FROM.

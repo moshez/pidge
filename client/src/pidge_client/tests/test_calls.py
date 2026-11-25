@@ -116,6 +116,19 @@ class TestCalls(unittest.TestCase):
         """get_attachment returns the presigned URL."""
         url = calls.get_attachment(self.session, self.ids["html_only"], "0-body.html")
         assert_that(url, contains_string("0-body.html"))
+        assert_that(url, contains_string("expires=900"))
+        longer = calls.get_attachment(
+            self.session, self.ids["html_only"], "0-body.html", duration=8 * 3600
+        )
+        assert_that(longer, contains_string("expires=28800"))
+
+    def test_put_attachment(self) -> None:
+        """put_attachment returns an upload ID and a URL signed for the size."""
+        upload = calls.put_attachment(self.session, "a.csv", 12, "text/csv")
+        assert_that(upload.size, equal_to(12))
+        assert_that(upload.expires_in, equal_to(900))
+        assert_that(upload.url, contains_string(f"uploads/{upload.upload_id}/data"))
+        assert_that(upload.url, contains_string("size=12"))
 
     def test_tags(self) -> None:
         """tag_email returns the new tags, and list_tags counts them."""

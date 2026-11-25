@@ -10,7 +10,6 @@ from typing import Protocol
 from . import jsonvalue
 from .store import Listed, NotFound, NotModified, PreconditionFailed, StoredObject
 
-PRESIGN_SECONDS = 900
 _ERRORS: Mapping[str, type[Exception]] = {
     "304": NotModified,
     "NotModified": NotModified,
@@ -76,6 +75,10 @@ class S3Client(Protocol):
         Returns:
             The response.
         """
+
+
+class URLSigner(Protocol):
+    """Presigns S3 requests (a boto3 S3 client, or one built from fixed keys)."""
 
     def generate_presigned_url(self, *args: object, **kwargs: object) -> str:
         """Create a presigned URL.
@@ -158,24 +161,30 @@ def read_body(response: Mapping[str, object]) -> bytes:
 class S3Store:
     """An object store in one S3 bucket.
 
+    Presigned URLs are signed by a separate signer: a URL stops working
+    when the credentials that signed it expire, and the Lambda role's
+    temporary credentials can expire long before a URL's requested lifetime.
+
     Construct it with :meth:`create`.
     """
 
     _client: S3Client
     _bucket: str
+    _signer: URLSigner
 
     @classmethod
-    def create(cls, client: S3Client, bucket: str) -> "S3Store":
+    def create(cls, client: S3Client, bucket: str, signer: URLSigner) -> "S3Store":
         """Wrap a boto3 S3 client.
 
         Args:
             client: The boto3 client.
             bucket: The bucket name.
+            signer: Signs presigned URLs.
 
         Returns:
             The store.
         """
-        return cls(_client=client, _bucket=bucket)
+        return cls(_client=client, _bucket=bucket, _signer=signer)
 
     def get(self, key: str) -> StoredObject:
         """Read an object.
@@ -291,12 +300,13 @@ class S3Store:
         entries = (entry for page in pages for entry in parse_listing(page))
         return list(itertools.islice(entries, limit))
 
-    def presign(self, key: str, filename: str) -> str:
-        """Create a short-lived download URL.
+    def presign(self, key: str, filename: str, seconds: int) -> str:
+        """Create a download URL that works for a limited time.
 
         Args:
             key: The object key.
             filename: The download file name to suggest.
+            seconds: How long the URL works.
 
         Returns:
             The URL.
@@ -307,8 +317,27 @@ class S3Store:
             Key=key,
             ResponseContentDisposition=f"attachment; filename*=UTF-8''{quoted}",
         )
-        return self._client.generate_presigned_url(
-            "get_object", Params=params, ExpiresIn=PRESIGN_SECONDS
+        return self._signer.generate_presigned_url(
+            "get_object", Params=params, ExpiresIn=seconds
+        )
+
+    def presign_upload(self, key: str, size: int, seconds: int) -> str:
+        """Create a PUT URL that only accepts a body of exactly ``size`` bytes.
+
+        Content-Length is one of the signed headers, so S3 refuses a body of
+        any other size (SignatureDoesNotMatch).
+
+        Args:
+            key: The object key.
+            size: The body size, in bytes.
+            seconds: How long the URL works.
+
+        Returns:
+            The URL.
+        """
+        params = dict(Bucket=self._bucket, Key=key, ContentLength=size)
+        return self._signer.generate_presigned_url(
+            "put_object", Params=params, ExpiresIn=seconds
         )
 
 

@@ -58,6 +58,21 @@ class Recording:
         """
         raise AssertionError(f"unexpected GET {url}")
 
+    def put(self, url: str, body: bytes) -> Reply:  # pragma: no cover
+        """Refuse a PUT: these tests upload nothing.
+
+        Args:
+            url: The URL.
+            body: The body.
+
+        Returns:
+            Never returns.
+
+        Raises:
+            AssertionError: Always.
+        """
+        raise AssertionError(f"unexpected PUT {url}")
+
 
 class TestInitialize(unittest.TestCase):
     """The client's handshake with an initialize-era server."""

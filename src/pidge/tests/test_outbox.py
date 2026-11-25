@@ -2,6 +2,7 @@
 
 import unittest
 from collections.abc import Callable
+from email.message import EmailMessage
 
 from hamcrest import (
     assert_that,
@@ -11,7 +12,7 @@ from hamcrest import (
     instance_of,
 )
 
-from ..compose import AttachmentRef, Draft, replace_message_id
+from ..compose import AttachmentRef, Draft, attach, replace_message_id
 from ..outbox import (
     OutboxState,
     Status,
@@ -198,6 +199,12 @@ class TestOutboxEdges(unittest.TestCase):
         self.world = make_world(self)
         files = {"a.pdf": b"A", "b.pdf": b"B"}
         self.original = deliver(self.world, "f", sample_raw("Files", ".", files))
+
+    def test_unknown_reference(self) -> None:
+        """Only stored attachments and uploads can be attached."""
+        message: EmailMessage[str, str] = EmailMessage()
+        attempt = failure(lambda: attach("x", self.world.context, message))
+        assert_that(attempt, instance_of(TypeError))
 
     def test_attachment_types(self) -> None:
         """Known attachments keep their type; unknown ones are octet-stream."""

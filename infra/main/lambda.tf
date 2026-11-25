@@ -67,6 +67,12 @@ data "aws_iam_policy_document" "lambda" {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.session_key.arn]
   }
+  # awsclients.KeyedSigner: the URL signer's secret access key.
+  statement {
+    sid       = "SignerKey"
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.signer_secret.arn]
+  }
   statement {
     sid       = "KillSwitchStopFunction"
     actions   = ["lambda:PutFunctionConcurrency"]
@@ -86,6 +92,44 @@ resource "aws_ssm_parameter" "session_key" {
   name  = "/pidge/session-signing-key"
   type  = "SecureString"
   value = random_password.session_key.result
+}
+
+# Presigned URLs (get_attachment, put_attachment) die when the credentials
+# that signed them expire. The Lambda role's session credentials can expire
+# within the hour, so URLs are signed with this user's long-term key instead,
+# which lets a download link last the full 8 hours get_attachment allows.
+# The user can do nothing but what the URLs are for.
+resource "aws_iam_user" "signer" {
+  name = "pidge-url-signer"
+}
+
+data "aws_iam_policy_document" "signer" {
+  statement {
+    sid       = "DownloadAttachments"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.mail.arn}/msgs/*/attachments/*"]
+  }
+  statement {
+    sid       = "Upload"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.mail.arn}/uploads/*/data"]
+  }
+}
+
+resource "aws_iam_user_policy" "signer" {
+  name   = "pidge-url-signer"
+  user   = aws_iam_user.signer.name
+  policy = data.aws_iam_policy_document.signer.json
+}
+
+resource "aws_iam_access_key" "signer" {
+  user = aws_iam_user.signer.name
+}
+
+resource "aws_ssm_parameter" "signer_secret" {
+  name  = "/pidge/url-signer-secret"
+  type  = "SecureString"
+  value = aws_iam_access_key.signer.secret
 }
 
 resource "aws_iam_role_policy" "lambda" {
@@ -119,6 +163,10 @@ resource "aws_lambda_function" "pidge" {
       USER_POOL_ID      = aws_cognito_user_pool.pidge.id
       # sessions.py: SSM SecureString with the session-token signing key.
       SESSION_KEY_PARAMETER = aws_ssm_parameter.session_key.name
+      # awsclients.KeyedSigner: presigned URLs are signed with this key. A
+      # new key ID here also restarts every instance, dropping cached secrets.
+      SIGNER_KEY_ID           = aws_iam_access_key.signer.id
+      SIGNER_SECRET_PARAMETER = aws_ssm_parameter.signer_secret.name
       # mcp.py: logged on every MCP initialize.
       PIDGE_BUILD = var.build
       # budget.tf: SNS records from this topic trip the kill switch.
@@ -134,6 +182,7 @@ resource "aws_lambda_function" "pidge" {
 
   depends_on = [
     aws_iam_role_policy.lambda,
+    aws_iam_user_policy.signer,
     aws_iam_role_policy_attachment.lambda_logs,
     aws_cloudwatch_log_group.pidge,
   ]

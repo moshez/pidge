@@ -164,17 +164,31 @@ class FlakyStore:
         """
         return self._inner.list(prefix, limit)
 
-    def presign(self, key: str, filename: str) -> str:
+    def presign(self, key: str, filename: str, seconds: int) -> str:
         """Delegate presigning.
 
         Args:
             key: The key.
             filename: The file name.
+            seconds: The lifetime.
 
         Returns:
             The URL.
         """
-        return self._inner.presign(key, filename)
+        return self._inner.presign(key, filename, seconds)
+
+    def presign_upload(self, key: str, size: int, seconds: int) -> str:
+        """Delegate upload presigning.
+
+        Args:
+            key: The key.
+            size: The body size.
+            seconds: The lifetime.
+
+        Returns:
+            The URL.
+        """
+        return self._inner.presign_upload(key, size, seconds)
 
 
 def client_error(code: str, status: int) -> Exception:

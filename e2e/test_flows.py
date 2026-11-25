@@ -117,6 +117,19 @@ class EndToEnd(unittest.TestCase):
     def outbox(self, outbox_id: str) -> Mapping[str, object]:
         return self.stack.read_json(f"outbox/{outbox_id}/state.json")
 
+    def local_url(self, presigned: str) -> str:
+        """Point a presigned URL at the emulator's host port."""
+        url = urllib.parse.urlparse(presigned)
+        assert_that(url.hostname, equal_to(CONTAINER_HOST))
+        return url._replace(netloc=f"127.0.0.1:{self.stack.emulator.port}").geturl()
+
+    def download(self, ulid: str, name: str, **extra: object) -> bytes:
+        """Fetch an attachment through get_attachment's presigned link."""
+        link = self.stack.tool("get_attachment", id=ulid, name=name, **extra)
+        assert isinstance(link, dict)
+        data: bytes = urllib.request.urlopen(self.local_url(link["url"])).read()
+        return data
+
 
 class TestFunctionUrl(EndToEnd):
     """OAuth resource-server behaviour at the Function URL."""
@@ -177,6 +190,7 @@ class TestFunctionUrl(EndToEnd):
                     "get_message",
                     "get_session_token",
                     "list_tags",
+                    "put_attachment",
                     "refresh_tools",
                     "search",
                     "send_email",
@@ -260,16 +274,6 @@ class TestInbound(EndToEnd):
         name = read["headers"]["attachments"][0]["name"]
         assert_that(self.download(ulid, name), equal_to(b"%PDF-1.7 data"))
         assert_that(self.stack.tool("list_tags"), equal_to({"tags": {"inbox": 1}}))
-
-    def download(self, ulid: str, name: str) -> bytes:
-        """Fetch an attachment through get_attachment's presigned link."""
-        link = self.stack.tool("get_attachment", id=ulid, name=name)
-        assert isinstance(link, dict)
-        url = urllib.parse.urlparse(link["url"])
-        assert_that(url.hostname, equal_to(CONTAINER_HOST))
-        local = url._replace(netloc=f"127.0.0.1:{self.stack.emulator.port}").geturl()
-        data: bytes = urllib.request.urlopen(local).read()
-        return data
 
     def test_html_body_renders_from_local_files(self) -> None:
         """0-body.html and the files it references download into one directory."""
@@ -400,6 +404,41 @@ class TestOutbound(EndToEnd):
         attached = [part.get_filename() for part in sent.iter_attachments()]
         assert_that(attached, equal_to(["contract.pdf"]))
         assert_that(self.outbox(outbox_id)["status"], equal_to("sending"))
+
+    def test_send_uploaded_file(self) -> None:
+        """put_attachment's URL takes the file; send_email attaches it."""
+        data = b"col1,col2\n1,2\n"
+        reserved = self.stack.tool(
+            "put_attachment", name="data.csv", size=len(data), content_type="text/csv"
+        )
+        assert isinstance(reserved, dict)
+        assert_that(reserved["url"], contains_string("content-length"))
+        # urllib would send form-urlencoded, which moto parses away.
+        put = urllib.request.Request(
+            self.local_url(reserved["url"]),
+            data=data,
+            method="PUT",
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        urllib.request.urlopen(put).read()
+        outbox_id = self.send(
+            to=["alice@example.com"],
+            subject="Data",
+            body="Attached.",
+            attach_from=[{"upload": reserved["upload_id"]}],
+        )
+        raw = self.stack.emulator.sends[0].raw
+        sent = email.message_from_bytes(raw, policy=email.policy.default)
+        parts = [
+            (part.get_filename(), part.get_content_type(), part.get_content())
+            for part in sent.iter_attachments()
+        ]
+        assert_that(parts, equal_to([("data.csv", "text/csv", data.decode())]))
+        read = self.stack.tool("get_message", id=outbox_id)
+        assert isinstance(read, dict)
+        name = read["headers"]["attachments"][0]["name"]
+        long_lived = self.download(outbox_id, name, duration=8 * 3600)
+        assert_that(long_lived, equal_to(data))
 
     def test_bcc_is_enveloped_not_shown(self) -> None:
         """Bcc recipients get the message but are not in its headers."""

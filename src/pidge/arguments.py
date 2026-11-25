@@ -121,13 +121,14 @@ def flag(args: Mapping[str, object], name: str) -> bool | None:
     raise ToolError(f"{name} must be a boolean")
 
 
-def bounded(args: Mapping[str, object], name: str, limit: int) -> int:
+def bounded(args: Mapping[str, object], name: str, limit: int, default: int = 0) -> int:
     """Read an optional integer argument between 1 and a limit.
 
     Args:
         args: The arguments.
         name: The argument name.
-        limit: The maximum, also the default.
+        limit: The maximum.
+        default: The value when the argument is missing (0: the limit).
 
     Returns:
         The value.
@@ -135,7 +136,7 @@ def bounded(args: Mapping[str, object], name: str, limit: int) -> int:
     Raises:
         ToolError: If the value is not an integer in range.
     """
-    value = args.get(name, limit)
+    value = args.get(name, default or limit)
     if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= limit:
         raise ToolError(f"{name} must be an integer from 1 to {limit}")
     return value

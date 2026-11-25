@@ -24,7 +24,10 @@ CLIENT_EXAMPLE = (
 INSTRUCTIONS = (
     "This is a personal mailbox. Search first, then read messages by id. "
     "Sending is asynchronous: send_email returns an outbox id; search "
-    "tags=['outbox'] to see what is still queued.\n"
+    "tags=['outbox'] to see what is still queued. To attach a new file, "
+    "call put_attachment with its name and exact size, PUT the bytes to the "
+    "returned URL, then pass {upload: upload_id} in send_email's "
+    "attach_from.\n"
     f"If a tool you expected is missing, call {REFRESH_TOOLS}.\n\n"
     "For anything beyond a few tool calls (bulk triage, rendering the inbox "
     "or a message, walking all search pages), call get_session_token, then "

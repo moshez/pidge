@@ -129,12 +129,25 @@ class ObjectStore(Protocol):
             The matching entries.
         """
 
-    def presign(self, key: str, filename: str) -> str:
-        """Create a short-lived download URL.
+    def presign(self, key: str, filename: str, seconds: int) -> str:
+        """Create a download URL that works for a limited time.
 
         Args:
             key: The object key.
             filename: The download file name to suggest.
+            seconds: How long the URL works.
+
+        Returns:
+            The URL.
+        """
+
+    def presign_upload(self, key: str, size: int, seconds: int) -> str:
+        """Create a PUT URL that only accepts a body of exactly ``size`` bytes.
+
+        Args:
+            key: The object key.
+            size: The body size, in bytes; it is part of the signature.
+            seconds: How long the URL works.
 
         Returns:
             The URL.

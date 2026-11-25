@@ -14,7 +14,7 @@ from hamcrest import (
 )
 
 from .. import jsonvalue
-from ..awsclients import LambdaInvoker, SesSender, SsmSecret
+from ..awsclients import KeyedSigner, LambdaInvoker, SesSender, SsmSecret
 from ..handler import App, dispatch
 from ..outbox import read_state
 from ..ports import Envelope, SendRejected
@@ -185,8 +185,12 @@ class TestDispatch(unittest.TestCase):
         assert_that(done, has_item("inbound-done/r"))
         flaky = FlakyStore.create(self.world.store, "x", 0)
         assert_that(
-            flaky.presign("inbound/r", "r.eml"),
-            equal_to("memory:inbound/r?filename=r.eml"),
+            flaky.presign("inbound/r", "r.eml", 9),
+            equal_to("memory:inbound/r?filename=r.eml&expires=9"),
+        )
+        assert_that(
+            flaky.presign_upload("uploads/u/data", 4, 9),
+            equal_to("memory:uploads/u/data?size=4&expires=9"),
         )
 
 
@@ -232,3 +236,29 @@ class TestAdapters(unittest.TestCase):
         assert_that(
             client.recorded(), equal_to([dict(Name="/pidge/key", WithDecryption=True)])
         )
+
+    def test_keyed_signer(self) -> None:
+        """The signing client is built once, from the key ID and secret."""
+        built: list[tuple[str, str]] = []
+        urls = iter(["u1", "u2"])
+
+        @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+        class FakeClient:
+            def generate_presigned_url(  # noqa: SLD801
+                self, *args: object, **kwargs: object
+            ) -> str:
+                return next(urls)
+
+        def factory(key_id: str, secret: str) -> FakeClient:
+            built.append((key_id, secret))
+            return FakeClient()
+
+        keyed = KeyedSigner.create("AKIA1", lambda: b"s3cret", factory)
+        assert_that(
+            [
+                keyed.generate_presigned_url("get_object"),
+                keyed.generate_presigned_url(),
+            ],
+            equal_to(["u1", "u2"]),
+        )
+        assert_that(built, equal_to([("AKIA1", "s3cret")]))

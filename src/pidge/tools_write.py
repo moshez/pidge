@@ -1,18 +1,52 @@
 """The MCP tools that change the mailbox."""
 
+import re
 from collections.abc import Mapping, Sequence
 from email.utils import formataddr, getaddresses, parseaddr
 
-from . import arguments, jsonvalue
-from .compose import AttachmentRef, Draft, MissingAttachment
+from . import arguments, jsonvalue, ulid
+from .compose import AttachmentRef, Draft, MissingAttachment, UploadRef
 from .outbox import enqueue
 from .ports import Settings
 from .store import NotFound
 from .tagging import TagError, tag_email
 from .toolkit import MESSAGE_ID, TEXT, TEXT_LIST, Services, Tool, ToolError, schema
+from .uploads import Upload, reserve, upload_key
+
+# SES takes messages up to 40 MB after encoding; base64 adds a third.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+UPLOAD_SECONDS = 15 * 60
+CONTENT_TYPE = re.compile(r"\A[\w.+-]+/[\w.+-]+\Z")
+DEFAULT_CONTENT_TYPE = "application/octet-stream"
+ATTACH_SHAPE = "attach_from must be a list of {id, name} or {upload} objects"
 
 
-def attachment_refs(args: Mapping[str, object]) -> Sequence[AttachmentRef]:
+def parse_attach_item(item: Mapping[str, object]) -> AttachmentRef | UploadRef:
+    """Read one ``attach_from`` entry.
+
+    Args:
+        item: ``{id, name}`` for a stored attachment, or ``{upload}``.
+
+    Returns:
+        The reference.
+
+    Raises:
+        ToolError: If the entry is malformed.
+    """
+    if "upload" not in item:
+        return AttachmentRef(
+            message=arguments.message_id(item, "id"),
+            name=arguments.required_text(item, "name"),
+        )
+    upload = arguments.text(item, "upload")
+    if "id" in item or "name" in item:
+        raise ToolError(ATTACH_SHAPE)
+    if not ulid.is_ulid(upload):
+        raise ToolError("upload must be an upload_id from put_attachment")
+    return UploadRef(upload=upload)
+
+
+def attachment_refs(args: Mapping[str, object]) -> Sequence[AttachmentRef | UploadRef]:
     """Read the ``attach_from`` argument.
 
     Args:
@@ -29,14 +63,8 @@ def attachment_refs(args: Mapping[str, object]) -> Sequence[AttachmentRef]:
             jsonvalue.as_dict(item) for item in jsonvalue.get_list(args, "attach_from")
         ]
     except jsonvalue.JSONShapeError:
-        raise ToolError("attach_from must be a list of {id, name} objects") from None
-    return [
-        AttachmentRef(
-            message=arguments.message_id(item, "id"),
-            name=arguments.required_text(item, "name"),
-        )
-        for item in items
-    ]
+        raise ToolError(ATTACH_SHAPE) from None
+    return [parse_attach_item(item) for item in items]
 
 
 def sender_header(settings: Settings, requested: str) -> str:
@@ -115,6 +143,54 @@ def run_send_email(services: Services, args: Mapping[str, object]) -> object:
     return dict(outbox_id=outbox_id, status="pending")
 
 
+def upload_request(args: Mapping[str, object]) -> Upload:
+    """Read the ``put_attachment`` arguments.
+
+    Args:
+        args: The tool arguments.
+
+    Returns:
+        The upload's metadata.
+
+    Raises:
+        ToolError: If an argument is missing or malformed.
+    """
+    name = arguments.required_text(args, "name")
+    if not name.isprintable() or "/" in name or "\\" in name:
+        raise ToolError("name must be a file name, without slashes")
+    content_type = arguments.text(args, "content_type") or DEFAULT_CONTENT_TYPE
+    if not CONTENT_TYPE.match(content_type):
+        raise ToolError("content_type must be a MIME type, such as application/pdf")
+    if "size" not in args:
+        raise ToolError("size is required")
+    size = arguments.bounded(args, "size", MAX_UPLOAD_BYTES)
+    return Upload(name=name, content_type=content_type, size=size)
+
+
+def run_put_attachment(services: Services, args: Mapping[str, object]) -> object:
+    """Reserve an upload and presign its PUT URL.
+
+    Args:
+        services: The services.
+        args: The tool arguments.
+
+    Returns:
+        The upload ID, the URL, and how long it works.
+    """
+    upload = upload_request(args)
+    context = services.context
+    upload_id = context.new_id()
+    reserve(context.store, upload_id, upload)
+    key = upload_key(upload_id, "data")
+    return dict(
+        upload_id=upload_id,
+        url=context.store.presign_upload(key, upload.size, UPLOAD_SECONDS),
+        method="PUT",
+        size=upload.size,
+        expires_in=UPLOAD_SECONDS,
+    )
+
+
 def run_tag_email(services: Services, args: Mapping[str, object]) -> object:
     """Change a message's tags.
 
@@ -148,7 +224,9 @@ SEND_EMAIL = Tool(
     description=(
         "Queue an email for sending; returns its outbox id at once. For a "
         "reply, pass in_reply_to_id so threading headers are set. attach_from "
-        "copies attachments of stored messages. from sets the sender, which must "
+        "lists files to attach: {id, name} copies an attachment of a stored "
+        "message; {upload} attaches a file uploaded through put_attachment "
+        "(PUT it first). from sets the sender, which must "
         "be under the mail domain (a bare address or 'Name <address>'); it "
         "defaults to the mailbox address."
     ),
@@ -163,12 +241,47 @@ SEND_EMAIL = Tool(
             "from": TEXT,
             "attach_from": {
                 "type": "array",
-                "items": schema({"id": MESSAGE_ID, "name": TEXT}, ["id", "name"]),
+                "items": schema(
+                    {
+                        "id": MESSAGE_ID,
+                        "name": TEXT,
+                        "upload": {
+                            "type": "string",
+                            "description": "upload_id from put_attachment.",
+                        },
+                    },
+                    [],
+                ),
             },
         },
         ["to", "subject", "body"],
     ),
     run=run_send_email,
+)
+
+
+PUT_ATTACHMENT = Tool(
+    name="put_attachment",
+    description=(
+        "Upload a new file to attach to an email. Give its name, exact size "
+        "in bytes (at most 25 MiB) and content_type; get back upload_id and "
+        "a URL that works for 15 minutes. PUT exactly size bytes to the URL "
+        "with no Authorization header (for example curl -T file URL); S3 "
+        "refuses any other size. Then pass {upload: upload_id} in "
+        "send_email's attach_from. Uploads are deleted after 7 days."
+    ),
+    schema=schema(
+        {
+            "name": {"type": "string", "description": "The attachment's file name."},
+            "size": {"type": "integer", "minimum": 1, "maximum": MAX_UPLOAD_BYTES},
+            "content_type": {
+                "type": "string",
+                "description": "MIME type (default application/octet-stream).",
+            },
+        },
+        ["name", "size"],
+    ),
+    run=run_put_attachment,
 )
 
 
@@ -179,4 +292,4 @@ TAG_EMAIL = Tool(
     run=run_tag_email,
 )
 
-WRITE_TOOLS = (SEND_EMAIL, TAG_EMAIL)
+WRITE_TOOLS = (SEND_EMAIL, PUT_ATTACHMENT, TAG_EMAIL)

@@ -2,12 +2,13 @@
 
 import json
 import unittest
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from hamcrest import (
     assert_that,
     contains_exactly,
     contains_string,
+    ends_with,
     equal_to,
     has_key,
     has_length,
@@ -90,6 +91,7 @@ class TestProtocol(unittest.TestCase):
                 "get_attachment",
                 "list_tags",
                 "send_email",
+                "put_attachment",
                 "tag_email",
                 "get_session_token",
                 "refresh_tools",
@@ -175,8 +177,72 @@ class TestTools(unittest.TestCase):
         message = structured(self.call("get_message", {"id": self.original}))
         includes(message, dict(body="Tacos?\n", direction="in"))
         args = {"id": self.original, "name": "1-menu.pdf"}
-        link = structured(self.call("get_attachment", args))
-        assert_that(jsonvalue.get_str(link, "url"), starts_with("memory:"))
+        for extra, seconds in [({}, 900), ({"duration": 28800}, 28800)]:
+            link = structured(self.call("get_attachment", dict(args, **extra)))
+            includes(link, dict(expires_in=seconds))
+            url = jsonvalue.get_str(link, "url")
+            assert_that(url, ends_with(f"&expires={seconds}"))
+
+    def upload(self, data: bytes, **extra: object) -> str:
+        """Upload a file the way a client would.
+
+        Args:
+            data: The file.
+            **extra: More put_attachment arguments.
+
+        Returns:
+            The upload ID.
+        """
+        args = dict(name="notes.txt", size=len(data), **extra)
+        reply = structured(self.call("put_attachment", args))
+        url = jsonvalue.get_str(reply, "url")
+        assert_that(url, ends_with(f"?size={len(data)}&expires=900"))
+        includes(reply, dict(method="PUT", size=len(data), expires_in=900))
+        self.world.store.put(url.removeprefix("memory:").partition("?")[0], data)
+        return jsonvalue.get_str(reply, "upload_id")
+
+    def sent_parts(self, attach_from: object) -> Sequence[tuple[str, str]]:
+        """Send a message and list its stored parts.
+
+        Args:
+            attach_from: The ``attach_from`` argument.
+
+        Returns:
+            Each part's stored name and content type.
+        """
+        args = dict(to=["a@example.com"], subject="Notes", attach_from=attach_from)
+        outbox_id = structured(self.call("send_email", args))["outbox_id"]
+        stored = structured(self.call("get_message", {"id": outbox_id}))
+        return [
+            (jsonvalue.get_str(item, "name"), jsonvalue.get_str(item, "content_type"))
+            for item in jsonvalue.objects(
+                jsonvalue.get_dict(stored, "headers"), "attachments"
+            )
+        ]
+
+    def test_send_upload(self) -> None:
+        """An uploaded file goes out as an attachment, with its type."""
+        upload = self.upload(b"hello", content_type="text/plain")
+        refs = [{"upload": upload}, {"id": self.original, "name": "1-menu.pdf"}]
+        assert_that(
+            self.sent_parts(refs),
+            contains_exactly(
+                ("1-notes.txt", "text/plain"), ("2-menu.pdf", "application/pdf")
+            ),
+        )
+
+    def test_unusable_uploads(self) -> None:
+        """send_email refuses uploads that are unknown, empty or malformed."""
+        pending = structured(self.call("put_attachment", dict(name="a", size=1)))
+        cases: list[tuple[Mapping[str, object], str]] = [
+            ({"upload": self.world.context.new_id()}, "no upload"),
+            ({"upload": pending["upload_id"]}, "has no data: PUT the file"),
+            ({"upload": "x"}, "upload must be an upload_id"),
+            ({"upload": "x", "id": self.original}, "attach_from must be a list"),
+        ]
+        for ref, message in cases:
+            args = dict(to=["a@example.com"], subject="x", attach_from=[ref])
+            assert_that(self.fails("send_email", args), contains_string(message))
 
     def test_missing(self) -> None:
         """Missing messages and attachments are tool errors."""
@@ -207,6 +273,12 @@ class TestTools(unittest.TestCase):
             ("send_email", {"to": [], "subject": "x"}, "to must list"),
             ("send_email", {"to": ["a"], "subject": "x", "attach_from": 1}, "attach"),
             ("tag_email", {"id": self.original, "add": [" "]}, "invalid tag"),
+            ("put_attachment", dict(name="a/b", size=1), "name must be a file name"),
+            ("put_attachment", dict(name="a\nb", size=1), "name must be a file name"),
+            ("put_attachment", dict(name="a", size=1, content_type="pdf"), "content"),
+            ("put_attachment", dict(name="a"), "size is required"),
+            ("put_attachment", dict(name="a", size=26 * 2**20), "size must be"),
+            ("get_attachment", dict(id=self.original, name="x", duration=0), "dur"),
         ]
         for name, args, prefix in cases:
             assert_that(self.fails(name, args), starts_with(prefix))
