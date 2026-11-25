@@ -25,13 +25,14 @@ from .killswitch import KillSwitch
 from .ports import Context, Settings
 from .s3store import S3Store
 from .search import ShardCache
+from .refresh import REFRESH_TOOL_SET
 from .sessions import SESSION_TOOLS, EitherValidator, SessionValidator
 from .toolkit import Build, Secret, Services
 from .tools_read import READ_TOOLS
 from .tools_write import WRITE_TOOLS
 
 FETCH_TIMEOUT = 5
-TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS)
+TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS, *REFRESH_TOOL_SET)
 
 
 def fetch_url(url: str) -> bytes:  # pragma: no cover

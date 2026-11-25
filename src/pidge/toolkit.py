@@ -54,6 +54,7 @@ class Services:
         cache: The local shard cache.
         session_key: Signs and checks session tokens.
         build: The running build, logged on each ``initialize``.
+        tools: Every tool the server has (set per request).
         endpoint: The MCP endpoint URL of the current request (set per request).
     """
 
@@ -61,6 +62,7 @@ class Services:
     cache: ShardSource
     session_key: Secret
     build: Build = DEV_BUILD
+    tools: Sequence["Tool"] = ()
     endpoint: str = ""
 
 

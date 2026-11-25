@@ -9,8 +9,9 @@ from hamcrest import assert_that, equal_to
 
 from .. import jsonvalue
 from ..auth import BearerValidator
+from ..refresh import REFRESH_TOOL_SET
 from ..sessions import SESSION_TOOLS
-from ..toolkit import Services
+from ..toolkit import Build, Services
 from ..tools_read import READ_TOOLS
 from ..tools_write import WRITE_TOOLS
 from ..web import route
@@ -18,7 +19,7 @@ from .sessionkey import SESSION_KEY
 from .fakes import World, new_cache
 
 HOST = "abc.lambda-url.us-east-2.on.aws"
-TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS)
+TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS, *REFRESH_TOOL_SET)
 
 
 def request(method: str, path: str, body: object, token: str) -> Mapping[str, object]:
@@ -149,3 +150,50 @@ def error_text(result: Mapping[str, object]) -> str:
     return jsonvalue.get_str(
         jsonvalue.as_dict(jsonvalue.get_list(result, "content")[0]), "text"
     )
+
+
+def built(world: World, build: Build) -> Services:
+    """Services for a fake deployment of a given build.
+
+    Args:
+        world: The environment.
+        build: The build.
+
+    Returns:
+        The services.
+    """
+    return Services(
+        context=world.context,
+        cache=new_cache(world, "cache"),
+        session_key=SESSION_KEY,
+        build=build,
+    )
+
+
+def with_headers(
+    body: object, extra: Mapping[str, str], method: str = "POST"
+) -> Mapping[str, object]:
+    """Build a request to /mcp with a good token and extra headers.
+
+    Args:
+        body: The JSON-RPC body.
+        extra: Extra request headers (lowercase names).
+        method: The HTTP method.
+
+    Returns:
+        The event.
+    """
+    event = request(method, "/mcp", body, "good")
+    return {**event, "headers": {**jsonvalue.as_dict(event["headers"]), **extra}}
+
+
+def json_body(response: Mapping[str, object]) -> Mapping[str, object]:
+    """Decode a JSON response body.
+
+    Args:
+        response: The HTTP response.
+
+    Returns:
+        The body.
+    """
+    return jsonvalue.loads_dict(jsonvalue.as_str(response["body"]))

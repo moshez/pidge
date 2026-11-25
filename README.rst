@@ -9,7 +9,8 @@ AI agent.
   shards kept in the same bucket.
 * The same function serves a stateless MCP endpoint (a Lambda Function URL)
   with seven tools: ``search``, ``get_message``, ``get_attachment``,
-  ``list_tags``, ``send_email``, ``tag_email`` and ``get_session_token``.
+  ``list_tags``, ``send_email``, ``tag_email``, ``get_session_token`` and
+  ``refresh_tools``.
   It is an OAuth 2.1 resource server; Cognito (email codes, dynamic client
   registration) signs you in.
 * Sending goes through a transactional outbox in S3 and SES v2.

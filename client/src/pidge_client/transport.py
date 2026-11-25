@@ -43,10 +43,12 @@ class Reply:
     Attributes:
         status: The HTTP status code.
         body: The response body.
+        headers: The response headers, with lowercase names.
     """
 
     status: int
     body: bytes
+    headers: Mapping[str, str] = dataclasses.field(default_factory=dict)
 
 
 class Transport(Protocol):
@@ -87,7 +89,8 @@ def send(request: urllib.request.Request, timeout: float) -> Reply:
     """
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return Reply(status=response.status, body=response.read())
+            headers = {name.lower(): value for name, value in response.headers.items()}
+            return Reply(status=response.status, body=response.read(), headers=headers)
     except urllib.error.HTTPError as error:
         with error:
             return Reply(status=error.code, body=error.read())
@@ -168,6 +171,49 @@ def check_status(reply: Reply, expected: int) -> None:
         raise HTTPStatusError(reply.status, reply.body.decode("utf-8", "replace"))
 
 
+def stream_messages(body: str) -> Sequence[Mapping[str, object]]:
+    """Parse a server-sent-events body into its JSON-RPC messages.
+
+    Args:
+        body: The body.
+
+    Returns:
+        Each event's data, decoded, in order.
+    """
+    messages = []
+    for block in body.replace("\r\n", "\n").split("\n\n"):
+        data = [
+            line.removeprefix("data:").removeprefix(" ")
+            for line in block.split("\n")
+            if line.startswith("data:")
+        ]
+        if data:
+            messages.append(jsonshape.as_dict(jsonshape.loads("\n".join(data))))
+    return messages
+
+
+def response_message(reply: Reply) -> Mapping[str, object]:
+    """Find the JSON-RPC response in a reply, plain JSON or SSE.
+
+    In an event stream, notifications and requests from the server are
+    ignored; the first message without a ``method`` is the response.
+
+    Args:
+        reply: The HTTP reply.
+
+    Returns:
+        The response message.
+    """
+    content_type = reply.headers.get("content-type", "")
+    if not content_type.startswith("text/event-stream"):
+        return jsonshape.as_dict(jsonshape.loads(reply.body))
+    messages = stream_messages(reply.body.decode("utf-8"))
+    responses = [message for message in messages if "method" not in message]
+    if not responses:
+        jsonshape.fail("a JSON-RPC response event", None)
+    return responses[0]
+
+
 def rpc_result(reply: Reply) -> Mapping[str, object]:
     """Check an HTTP reply to a JSON-RPC request and return its result.
 
@@ -181,7 +227,7 @@ def rpc_result(reply: Reply) -> Mapping[str, object]:
         RpcError: On a JSON-RPC error response.
     """
     check_status(reply, 200)
-    message = jsonshape.as_dict(jsonshape.loads(reply.body))
+    message = response_message(reply)
     if "error" in message:
         error = jsonshape.as_dict(message["error"])
         raise RpcError(

@@ -4,7 +4,6 @@ import contextlib
 import dataclasses
 import email.utils
 import http.server
-import json
 import pathlib
 import threading
 import unittest
@@ -12,6 +11,7 @@ from collections.abc import Iterator, Mapping, Sequence
 
 import pidge.tests
 from pidge.mcp import handle_rpc
+from pidge.web import http_reply
 from pidge.memstore import MemoryStore
 from pidge.store import NotFound
 from pidge.tests.fakes import World, deliver, make_world, new_cache, sample_raw
@@ -19,6 +19,7 @@ from pidge.tests.mcpclient import TOOLS
 from pidge.tests.sessionkey import SESSION_KEY
 from pidge.toolkit import Services
 
+from .. import jsonshape
 from ..transport import Reply, Session, Transport
 
 TOKEN = "test-token"
@@ -57,10 +58,17 @@ class InProcess:
         """
         if headers.get("Authorization") != f"Bearer {self.token}":
             return Reply(status=401, body=b'{"error": "invalid_token"}')
-        response = handle_rpc(self.services, TOOLS, body)
-        if response is None:
-            return Reply(status=202, body=b"")
-        return Reply(status=200, body=json.dumps(response).encode())
+        answer = handle_rpc(self.services, TOOLS, body)
+        event = {"headers": {"accept": headers.get("Accept", "")}}
+        response = http_reply(event, answer)
+        return Reply(
+            status=jsonshape.as_int(response["statusCode"]),
+            body=jsonshape.as_str(response["body"]).encode(),
+            headers={
+                name: jsonshape.as_str(value)
+                for name, value in jsonshape.as_dict(response["headers"]).items()
+            },
+        )
 
     def get(self, url: str) -> Reply:
         """Serve a presigned ``memory:`` URL from the store.
@@ -190,6 +198,8 @@ class Handler(http.server.BaseHTTPRequestHandler):  # noqa: SLD401,SLD504
             reply: The reply.
         """
         self.send_response(reply.status)
+        for name, value in reply.headers.items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(reply.body)))
         self.end_headers()
         self.wfile.write(reply.body)
@@ -197,7 +207,9 @@ class Handler(http.server.BaseHTTPRequestHandler):  # noqa: SLD401,SLD504
     def do_POST(self) -> None:  # noqa: N802
         """Serve a POST."""
         body = self.rfile.read(int(self.headers["Content-Length"]))
-        headers = {"Authorization": self.headers.get("Authorization", "")}
+        headers = {
+            name: self.headers.get(name, "") for name in ("Authorization", "Accept")
+        }
         self.answer(self.transport.post(self.path, headers, body))
 
     def do_GET(self) -> None:  # noqa: N802

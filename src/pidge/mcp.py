@@ -1,9 +1,11 @@
 """A stateless MCP server over JSON-RPC (streamable HTTP, JSON responses)."""
 
+import dataclasses
 import json
 from collections.abc import Callable, Mapping, Sequence
 
 from . import jsonvalue
+from .refresh import NAME as REFRESH_TOOLS
 from .toolkit import Services, Tool, ToolError
 
 SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -22,7 +24,8 @@ CLIENT_EXAMPLE = (
 INSTRUCTIONS = (
     "This is a personal mailbox. Search first, then read messages by id. "
     "Sending is asynchronous: send_email returns an outbox id; search "
-    "tags=['outbox'] to see what is still queued.\n\n"
+    "tags=['outbox'] to see what is still queued.\n"
+    f"If a tool you expected is missing, call {REFRESH_TOOLS}.\n\n"
     "For anything beyond a few tool calls (bulk triage, rendering the inbox "
     "or a message, walking all search pages), call get_session_token, then "
     f"in a shell clone {REPOSITORY} and use pidge_client with "
@@ -58,7 +61,7 @@ def initialize(
     build.log(json.dumps(record, sort_keys=True))
     return {
         "protocolVersion": version,
-        "capabilities": {"tools": {"listChanged": False}},
+        "capabilities": {"tools": {"listChanged": True}},
         "serverInfo": {"name": "pidge", "version": build.name},
         "instructions": INSTRUCTIONS,
     }
@@ -152,7 +155,8 @@ def call_tool(
         args = jsonvalue.get_dict(params, "arguments")
     except jsonvalue.JSONShapeError:
         raise RPCError(INVALID_PARAMS, "arguments must be an object") from None
-    return tool_result(by_name[name], services, args)
+    every = dataclasses.replace(services, tools=tools)
+    return tool_result(by_name[name], every, args)
 
 
 METHODS: Mapping[str, Method] = {
@@ -209,9 +213,36 @@ def run_method(
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def handle_rpc(
-    services: Services, tools: Sequence[Tool], body: bytes
-) -> Mapping[str, object] | None:
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Answer:
+    """The reply to one JSON-RPC message.
+
+    Attributes:
+        response: The response, or None for a notification.
+        announce: Whether to send ``notifications/tools/list_changed``
+            ahead of the response (a successful ``refresh_tools`` call).
+    """
+
+    response: Mapping[str, object] | None
+    announce: bool = False
+
+
+def announces(message: Mapping[str, object], response: Mapping[str, object]) -> bool:
+    """Tell whether a response answers a successful ``refresh_tools`` call.
+
+    Args:
+        message: The request.
+        response: Its response.
+
+    Returns:
+        True if the tool list should be re-announced with it.
+    """
+    if message["method"] != "tools/call" or "result" not in response:
+        return False
+    return jsonvalue.get_dict(message, "params").get("name") == REFRESH_TOOLS
+
+
+def handle_rpc(services: Services, tools: Sequence[Tool], body: bytes) -> Answer:
     """Handle one JSON-RPC message.
 
     Args:
@@ -220,12 +251,16 @@ def handle_rpc(
         body: The request body.
 
     Returns:
-        The response, or None for a notification (or a client response).
+        The answer; its response is None for a notification (or a client
+        response).
     """
     try:
         message = jsonvalue.loads_dict(body)
     except (ValueError, jsonvalue.JSONShapeError):
-        return error_response(None, PARSE_ERROR, "expected a JSON object")
+        return Answer(
+            response=error_response(None, PARSE_ERROR, "expected a JSON object")
+        )
     if "method" not in message or message.get("id") is None:
-        return None
-    return run_method(services, tools, message)
+        return Answer(response=None)
+    response = run_method(services, tools, message)
+    return Answer(response=response, announce=announces(message, response))

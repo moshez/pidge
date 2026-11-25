@@ -1,7 +1,8 @@
 """pidge_client against a deployed endpoint.
 
 Set PIDGE_ENDPOINT and PIDGE_TOKEN from a ``get_session_token`` result,
-then run ``nox -s e2e`` in ``client/``. Without them, the tests skip.
+then run ``nox -s e2e`` in ``client/``. Without them, the tests skip. Set
+PIDGE_EXPECTED_BUILD to the deployed git SHA to check the build.
 """
 
 import datetime
@@ -10,11 +11,14 @@ import unittest
 from collections.abc import Sequence
 
 from pidge_client import SearchArgs, Session, calls, iter_search, views
+from pidge_client import jsonshape
 from pidge_client.models import Hit
+from pidge_client.transport import initialize
 from pidge_client.workflows import body_part, fetch_body_html
 
 ENDPOINT = os.environ.get("PIDGE_ENDPOINT", "")
 TOKEN = os.environ.get("PIDGE_TOKEN", "")
+EXPECTED_BUILD = os.environ.get("PIDGE_EXPECTED_BUILD", "")
 SCAN = 25
 
 
@@ -25,6 +29,16 @@ class TestLive(unittest.TestCase):
     def setUp(self) -> None:
         """Connect."""
         self.session = Session(endpoint=ENDPOINT, token=TOKEN)
+
+    def test_build_and_refresh(self) -> None:
+        """initialize names the build; refresh_tools lists itself over SSE."""
+        info = jsonshape.as_dict(initialize(self.session)["serverInfo"])
+        refreshed = calls.refresh_tools(self.session)
+        self.assertEqual(refreshed.build, jsonshape.get_str(info, "version"))
+        if EXPECTED_BUILD:
+            self.assertEqual(refreshed.build, EXPECTED_BUILD)
+        names = {tool.name for tool in refreshed.tools}
+        self.assertIn("refresh_tools", names)
 
     def test_list_tags(self) -> None:
         """Tag counts are positive integers."""

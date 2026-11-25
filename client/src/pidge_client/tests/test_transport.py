@@ -117,7 +117,7 @@ class TestSession(unittest.TestCase):
     def test_list_tools(self) -> None:
         """tools/list returns the tool descriptions."""
         names = [tool["name"] for tool in list_tools(empty_mailbox(self).session)]
-        assert_that(names, has_length(7))
+        assert_that(names, has_length(8))
 
 
 class TestUnwrap(unittest.TestCase):
@@ -152,7 +152,7 @@ class TestUrllib(unittest.TestCase):
             with self.assertRaises(AuthError):
                 calls.list_tags(dataclasses.replace(session, token="stale"))
             reply = UrllibTransport.create().get(f"{base}/memory:msgs/{ulid}/body.txt")
-        assert_that(reply, equal_to(Reply(status=200, body=b"Body of Over HTTP\n")))
+        assert_that((reply.status, reply.body), equal_to((200, b"Body of Over HTTP\n")))
 
     def test_missing_object(self) -> None:
         """A presigned URL for a missing object is a 404."""

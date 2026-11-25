@@ -1,6 +1,5 @@
 """The build identity, and no MCP sessions: Mcp-Session-Id is ignored."""
 
-import dataclasses
 import unittest
 from collections.abc import Mapping
 
@@ -11,7 +10,7 @@ from ..toolkit import Build
 from ..web import route
 from .fakes import make_world
 from .flaky import GOOD
-from .mcpclient import TOOLS, Client, request
+from .mcpclient import TOOLS, built, with_headers
 
 BUILD = "0123abc"
 LIST = {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
@@ -23,12 +22,10 @@ class TestBuild(unittest.TestCase):
     """initialize names the build; session headers change nothing."""
 
     def setUp(self) -> None:
-        """Wire a client to build ``BUILD``, recording log lines."""
+        """Wire a deployment of build ``BUILD``, recording log lines."""
         self.logged: list[str] = []
-        world = make_world(self)
-        client = Client.create(world, GOOD)
         build = Build(name=BUILD, log=self.logged.append)
-        self.services = dataclasses.replace(client.services, build=build)
+        self.services = built(make_world(self), build)
 
     def post(
         self, body: Mapping[str, object], session_id: str | None, method: str = "POST"
@@ -43,11 +40,8 @@ class TestBuild(unittest.TestCase):
         Returns:
             The HTTP response.
         """
-        event = request(method, "/mcp", body, "good")
-        headers = dict(jsonvalue.as_dict(event["headers"]))
-        if session_id is not None:
-            headers["mcp-session-id"] = session_id
-        return route({**event, "headers": headers}, self.services, GOOD, TOOLS)
+        extra = {} if session_id is None else {"mcp-session-id": session_id}
+        return route(with_headers(body, extra, method), self.services, GOOD, TOOLS)
 
     def test_initialize(self) -> None:
         """initialize sets no session header, reports and logs the build."""

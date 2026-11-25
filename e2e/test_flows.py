@@ -177,6 +177,7 @@ class TestFunctionUrl(EndToEnd):
                     "get_message",
                     "get_session_token",
                     "list_tags",
+                    "refresh_tools",
                     "search",
                     "send_email",
                     "tag_email",
