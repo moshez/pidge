@@ -142,6 +142,32 @@ class Queued:
     status: str
 
 
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class ToolSummary:
+    """One tool in a ``refresh_tools`` result.
+
+    Attributes:
+        name: The tool name.
+        summary: The first sentence of its description.
+    """
+
+    name: str
+    summary: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Refreshed:
+    """A ``refresh_tools`` result.
+
+    Attributes:
+        tools: Every tool the server has.
+        build: The deployed build (git SHA, or ``dev``).
+    """
+
+    tools: Sequence[ToolSummary]
+    build: str
+
+
 def parse_hit(obj: Mapping[str, object]) -> Hit:
     """Parse a search result.
 
@@ -269,3 +295,22 @@ def parse_queued(obj: Mapping[str, object]) -> Queued:
         outbox_id=jsonshape.get_str(obj, "outbox_id"),
         status=jsonshape.get_str(obj, "status"),
     )
+
+
+def parse_refreshed(obj: Mapping[str, object]) -> Refreshed:
+    """Parse a ``refresh_tools`` result.
+
+    Args:
+        obj: The JSON object.
+
+    Returns:
+        The tool list and build.
+    """
+    tools = [
+        ToolSummary(
+            name=jsonshape.get_str(tool, "name"),
+            summary=jsonshape.get_str(tool, "summary"),
+        )
+        for tool in jsonshape.get_objects(obj, "tools")
+    ]
+    return Refreshed(tools=tools, build=jsonshape.get_str(obj, "build"))

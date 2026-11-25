@@ -92,6 +92,7 @@ class TestProtocol(unittest.TestCase):
                 "send_email",
                 "tag_email",
                 "get_session_token",
+                "refresh_tools",
             ),
         )
 

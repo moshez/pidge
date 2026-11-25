@@ -52,18 +52,20 @@ Layers
 ``pidge_client.transport``
    ``Session(endpoint=..., token=...)`` and ``call_tool``. A failed tool
    raises ``ToolError``, a JSON-RPC error ``RpcError``, an HTTP 401
-   ``AuthError``. The first request on a ``Session`` sends ``initialize``
-   and keeps the ``Mcp-Session-Id`` it returns for every later request.
-   pidge expires sessions on each deploy (HTTP 404); the session then
-   re-initializes once and retries, and only a second 404 raises
-   ``SessionExpired``. The transport is pluggable; the default uses
+   ``AuthError``, any other HTTP error (404 included) ``HTTPStatusError``.
+   A ``Session`` sends ``initialize`` before its first request; pidge keeps
+   no MCP sessions, so there is no session ID. Replies may be plain JSON or
+   server-sent events (``refresh_tools``); notifications in a stream are
+   ignored. The transport is pluggable; the default uses
    ``urllib.request``.
 
 ``pidge_client.calls``
    One typed wrapper per tool: ``search(session, SearchArgs(...))`` returns a
    ``Page`` of ``Hit`` objects and a ``next_cursor``; ``get_message``,
    ``tag_email``, ``list_tags``, ``get_attachment`` (a URL),
-   ``send_email(session, Draft(...))`` and ``get_session_token``. Models
+   ``send_email(session, Draft(...))``, ``get_session_token`` and
+   ``refresh_tools`` (every server tool with a one-sentence summary, and the
+   deployed build). Models
    are parsed (``models.parse_*``) from the exact JSON the tools return, so
    they load from saved JSON files too.
 

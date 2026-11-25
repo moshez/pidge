@@ -22,7 +22,7 @@ variable "image_uri" {
 }
 
 variable "build" {
-  description = "The git SHA being deployed. The Lambda gets it as PIDGE_BUILD and puts it in MCP session IDs, so a deploy expires every session (mcpsession.py)."
+  description = "The git SHA being deployed. The Lambda gets it as PIDGE_BUILD and logs it on every MCP initialize, so logs show which build a client connected to."
   type        = string
   default     = "dev"
 }

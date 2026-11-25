@@ -1,9 +1,8 @@
 """Send JSON-RPC ``tools/call`` requests to a pidge MCP endpoint.
 
-A ``Session`` initializes an MCP session before its first request and
-echoes the server's ``Mcp-Session-Id`` on every request after that. pidge
-expires sessions when it is redeployed (HTTP 404); the session then
-re-initializes once and retries the request.
+A ``Session`` sends ``initialize`` (and ``notifications/initialized``)
+before its first request. pidge keeps no MCP sessions, so there is no
+session ID to keep.
 """
 
 import dataclasses
@@ -18,7 +17,6 @@ from . import jsonshape
 
 PROTOCOL_VERSION = "2025-11-25"
 TIMEOUT = 60.0
-SESSION_HEADER = "mcp-session-id"
 CLIENT_INFO = {"name": "pidge_client", "version": "1"}
 
 
@@ -35,11 +33,7 @@ class AuthError(Exception):
 
 
 class HTTPStatusError(Exception):
-    """An HTTP status other than 200, 401 or 404; the arguments are status and body."""
-
-
-class SessionExpired(Exception):
-    """The server answered 404: the MCP session must be re-initialized."""
+    """An HTTP status other than 200 or 401; the arguments are status and body."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -99,8 +93,7 @@ def send(request: urllib.request.Request, timeout: float) -> Reply:
             return Reply(status=response.status, body=response.read(), headers=headers)
     except urllib.error.HTTPError as error:
         with error:
-            headers = {name.lower(): value for name, value in error.headers.items()}
-            return Reply(status=error.code, body=error.read(), headers=headers)
+            return Reply(status=error.code, body=error.read())
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -170,16 +163,55 @@ def check_status(reply: Reply, expected: int) -> None:
 
     Raises:
         AuthError: On HTTP 401.
-        SessionExpired: On HTTP 404.
-        HTTPStatusError: On any other unexpected status.
+        HTTPStatusError: On any other unexpected status (404 included).
     """
-    text = reply.body.decode("utf-8", "replace")
     if reply.status == 401:
-        raise AuthError(text)
-    if reply.status == 404:
-        raise SessionExpired(text)
+        raise AuthError(reply.body.decode("utf-8", "replace"))
     if reply.status != expected:
-        raise HTTPStatusError(reply.status, text)
+        raise HTTPStatusError(reply.status, reply.body.decode("utf-8", "replace"))
+
+
+def stream_messages(body: str) -> Sequence[Mapping[str, object]]:
+    """Parse a server-sent-events body into its JSON-RPC messages.
+
+    Args:
+        body: The body.
+
+    Returns:
+        Each event's data, decoded, in order.
+    """
+    messages = []
+    for block in body.replace("\r\n", "\n").split("\n\n"):
+        data = [
+            line.removeprefix("data:").removeprefix(" ")
+            for line in block.split("\n")
+            if line.startswith("data:")
+        ]
+        if data:
+            messages.append(jsonshape.as_dict(jsonshape.loads("\n".join(data))))
+    return messages
+
+
+def response_message(reply: Reply) -> Mapping[str, object]:
+    """Find the JSON-RPC response in a reply, plain JSON or SSE.
+
+    In an event stream, notifications and requests from the server are
+    ignored; the first message without a ``method`` is the response.
+
+    Args:
+        reply: The HTTP reply.
+
+    Returns:
+        The response message.
+    """
+    content_type = reply.headers.get("content-type", "")
+    if not content_type.startswith("text/event-stream"):
+        return jsonshape.as_dict(jsonshape.loads(reply.body))
+    messages = stream_messages(reply.body.decode("utf-8"))
+    responses = [message for message in messages if "method" not in message]
+    if not responses:
+        jsonshape.fail("a JSON-RPC response event", None)
+    return responses[0]
 
 
 def rpc_result(reply: Reply) -> Mapping[str, object]:
@@ -195,7 +227,7 @@ def rpc_result(reply: Reply) -> Mapping[str, object]:
         RpcError: On a JSON-RPC error response.
     """
     check_status(reply, 200)
-    message = jsonshape.as_dict(jsonshape.loads(reply.body))
+    message = response_message(reply)
     if "error" in message:
         error = jsonshape.as_dict(message["error"])
         raise RpcError(
@@ -225,17 +257,16 @@ def tool_content(result: Mapping[str, object]) -> Mapping[str, object]:
     return jsonshape.as_dict(result.get("structuredContent"))
 
 
-# Mutable on purpose: it outlives each request so the session ID is reused.
+# Mutable on purpose: it records, across requests, that initialize was sent.
 @dataclasses.dataclass(slots=True, kw_only=True)
 class Handshake:  # noqa: SLD501
-    """The MCP session ``initialize`` started: a Session's only mutable part.
+    """Whether a Session has initialized: its only mutable part.
 
     Attributes:
-        session_id: The server's ``Mcp-Session-Id`` (empty if it sent none),
-            or None before ``initialize``.
+        done: True once ``initialize`` succeeded.
     """
 
-    session_id: str | None = None
+    done: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -247,7 +278,7 @@ class Session:
         token: The bearer token.
         transport: How requests travel (default: urllib).
         ids: Supplies JSON-RPC request IDs.
-        handshake: The MCP session, started on the first request.
+        handshake: Whether ``initialize`` has been sent.
     """
 
     endpoint: str
@@ -258,7 +289,7 @@ class Session:
 
 
 def post(session: Session, message: Mapping[str, object]) -> Reply:
-    """POST one JSON-RPC message, with the session's ID if it has one.
+    """POST one JSON-RPC message.
 
     Args:
         session: The session.
@@ -273,8 +304,6 @@ def post(session: Session, message: Mapping[str, object]) -> Reply:
         "Accept": "application/json, text/event-stream",
         "MCP-Protocol-Version": PROTOCOL_VERSION,
     }
-    if session.handshake.session_id:
-        headers["Mcp-Session-Id"] = session.handshake.session_id
     body = json.dumps(message).encode("utf-8")
     return session.transport.post(session.endpoint, headers, body)
 
@@ -282,7 +311,7 @@ def post(session: Session, message: Mapping[str, object]) -> Reply:
 def request(
     session: Session, method: str, params: Mapping[str, object]
 ) -> Mapping[str, object]:
-    """Send one JSON-RPC request in the current MCP session.
+    """Send one JSON-RPC request.
 
     Args:
         session: The session.
@@ -296,31 +325,29 @@ def request(
     return rpc_result(post(session, message))
 
 
-def initialize(session: Session) -> None:
-    """Start a new MCP session, dropping any old one.
+def initialize(session: Session) -> Mapping[str, object]:
+    """Send ``initialize`` and ``notifications/initialized``.
 
     Args:
         session: The session.
+
+    Returns:
+        The ``initialize`` result.
     """
-    session.handshake.session_id = None
     params = dict(
         protocolVersion=PROTOCOL_VERSION, capabilities={}, clientInfo=CLIENT_INFO
     )
-    message = dict(jsonrpc="2.0", id=next(session.ids), method="initialize")
-    reply = post(session, {**message, "params": params})
-    rpc_result(reply)
-    session.handshake.session_id = reply.headers.get(SESSION_HEADER, "")
-    initialized = dict(jsonrpc="2.0", method="notifications/initialized")
-    check_status(post(session, initialized), 202)
+    result = request(session, "initialize", params)
+    reply = post(session, dict(jsonrpc="2.0", method="notifications/initialized"))
+    check_status(reply, 202)
+    session.handshake.done = True
+    return result
 
 
 def rpc(
     session: Session, method: str, params: Mapping[str, object]
 ) -> Mapping[str, object]:
     """Make a JSON-RPC request, initializing first if the session is new.
-
-    If the server has expired the session (it was redeployed), initialize
-    again and retry once.
 
     Args:
         session: The session.
@@ -330,11 +357,7 @@ def rpc(
     Returns:
         The result.
     """
-    if session.handshake.session_id is None:
-        initialize(session)
-    try:
-        return request(session, method, params)
-    except SessionExpired:
+    if not session.handshake.done:
         initialize(session)
     return request(session, method, params)
 

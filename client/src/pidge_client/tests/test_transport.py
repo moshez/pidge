@@ -117,7 +117,7 @@ class TestSession(unittest.TestCase):
     def test_list_tools(self) -> None:
         """tools/list returns the tool descriptions."""
         names = [tool["name"] for tool in list_tools(empty_mailbox(self).session)]
-        assert_that(names, has_length(7))
+        assert_that(names, has_length(8))
 
 
 class TestUnwrap(unittest.TestCase):

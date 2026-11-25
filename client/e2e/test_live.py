@@ -2,16 +2,16 @@
 
 Set PIDGE_ENDPOINT and PIDGE_TOKEN from a ``get_session_token`` result,
 then run ``nox -s e2e`` in ``client/``. Without them, the tests skip. Set
-PIDGE_EXPECTED_BUILD to the deployed git SHA to check the session IDs' build.
+PIDGE_EXPECTED_BUILD to the deployed git SHA to check the build.
 """
 
 import datetime
-import json
 import os
 import unittest
 from collections.abc import Sequence
 
 from pidge_client import SearchArgs, Session, calls, iter_search, views
+from pidge_client import jsonshape
 from pidge_client.models import Hit
 from pidge_client.transport import initialize
 from pidge_client.workflows import body_part, fetch_body_html
@@ -30,28 +30,15 @@ class TestLive(unittest.TestCase):
         """Connect."""
         self.session = Session(endpoint=ENDPOINT, token=TOKEN)
 
-    def test_session_id(self) -> None:
-        """initialize issues <build>.<random>; a request without it gets 404."""
-        initialize(self.session)
-        session_id = self.session.handshake.session_id or ""
-        build, _, random = session_id.partition(".")
-        self.assertEqual(len(random), 22)
+    def test_build_and_refresh(self) -> None:
+        """initialize names the build; refresh_tools lists itself over SSE."""
+        info = jsonshape.as_dict(initialize(self.session)["serverInfo"])
+        refreshed = calls.refresh_tools(self.session)
+        self.assertEqual(refreshed.build, jsonshape.get_str(info, "version"))
         if EXPECTED_BUILD:
-            self.assertEqual(build, EXPECTED_BUILD)
-        message = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-        headers = {
-            "Authorization": f"Bearer {TOKEN}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        body = json.dumps(message).encode()
-        reply = self.session.transport.post(ENDPOINT, headers, body)
-        self.assertEqual(reply.status, 404)
-        self.assertEqual(json.loads(reply.body)["error"]["code"], -32001)
-        with_id = {**headers, "Mcp-Session-Id": session_id}
-        self.assertEqual(
-            self.session.transport.post(ENDPOINT, with_id, body).status, 200
-        )
+            self.assertEqual(refreshed.build, EXPECTED_BUILD)
+        names = {tool.name for tool in refreshed.tools}
+        self.assertIn("refresh_tools", names)
 
     def test_list_tags(self) -> None:
         """Tag counts are positive integers."""

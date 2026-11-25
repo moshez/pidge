@@ -22,17 +22,17 @@ from .awsclients import (
 )
 from .handler import App, dispatch
 from .killswitch import KillSwitch
-from .mcpsession import Sessions, random_part
 from .ports import Context, Settings
 from .s3store import S3Store
 from .search import ShardCache
+from .refresh import REFRESH_TOOL_SET
 from .sessions import SESSION_TOOLS, EitherValidator, SessionValidator
-from .toolkit import Secret, Services
+from .toolkit import Build, Secret, Services
 from .tools_read import READ_TOOLS
 from .tools_write import WRITE_TOOLS
 
 FETCH_TIMEOUT = 5
-TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS)
+TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS, *REFRESH_TOOL_SET)
 
 
 def fetch_url(url: str) -> bytes:  # pragma: no cover
@@ -110,20 +110,18 @@ def context_from(environ: Mapping[str, str]) -> Context:  # pragma: no cover
     )
 
 
-def sessions_from(environ: Mapping[str, str]) -> Sessions:  # pragma: no cover
-    """Wire MCP session IDs to the deployed build.
+def build_from(environ: Mapping[str, str]) -> Build:  # pragma: no cover
+    """Name the running build.
 
     Args:
         environ: The process environment; Terraform sets PIDGE_BUILD to the
             deployed git SHA.
 
     Returns:
-        The sessions (build ``dev`` when PIDGE_BUILD is unset).
+        The build (``dev`` when PIDGE_BUILD is unset), logging to stdout.
     """
-    return Sessions(
-        build=environ.get("PIDGE_BUILD", "dev"),
-        random=random_part,
-        log=functools.partial(print, flush=True),
+    return Build(
+        name=environ.get("PIDGE_BUILD", "dev"), log=functools.partial(print, flush=True)
     )
 
 
@@ -143,7 +141,7 @@ def services_from(
         context=context,
         cache=ShardCache.create(os.path.join(context.workdir, "shards")),
         session_key=session_key,
-        sessions=sessions_from(os.environ),
+        build=build_from(os.environ),
     )
 
 

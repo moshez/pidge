@@ -3,24 +3,23 @@
 import base64
 import dataclasses
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 from hamcrest import assert_that, equal_to
 
 from .. import jsonvalue
 from ..auth import BearerValidator
+from ..refresh import REFRESH_TOOL_SET
 from ..sessions import SESSION_TOOLS
-from ..toolkit import Services
+from ..toolkit import Build, Services
 from ..tools_read import READ_TOOLS
 from ..tools_write import WRITE_TOOLS
-from ..mcpsession import HEADER
 from ..web import route
-from .sessionkey import SESSION_KEY, predictable_sessions
+from .sessionkey import SESSION_KEY
 from .fakes import World, new_cache
 
 HOST = "abc.lambda-url.us-east-2.on.aws"
-TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS)
-OWN = "<this client's session>"
+TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS, *REFRESH_TOOL_SET)
 
 
 def request(method: str, path: str, body: object, token: str) -> Mapping[str, object]:
@@ -56,68 +55,37 @@ class Client:
     Attributes:
         services: The services behind the endpoint.
         validator: The token validator.
-        logged: The server's log lines.
-        session_id: The session ID from ``initialize``, sent by default.
     """
 
     services: Services
     validator: BearerValidator
-    logged: Sequence[str]
-    session_id: str
 
     @classmethod
-    def create(
-        cls, world: World, validator: BearerValidator, token: str = "good"
-    ) -> "Client":
+    def create(cls, world: World, validator: BearerValidator) -> "Client":
         """Wire up a client.
 
         Args:
             world: The environment.
             validator: The token validator.
-            token: The bearer token to initialize with.
 
         Returns:
-            The client, with a session started.
+            The client.
         """
-        logged: list[str] = []
-        services = Services(
-            context=world.context,
-            cache=new_cache(world, "cache"),
-            session_key=SESSION_KEY,
-            sessions=predictable_sessions(logged.append),
-        )
-        body = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
-        event = request("POST", "/mcp", body, token)
-        headers = jsonvalue.as_dict(route(event, services, validator, TOOLS)["headers"])
-        session_id = jsonvalue.get_str(headers, HEADER)
-        return cls(
-            services=services, validator=validator, logged=logged, session_id=session_id
-        )
+        cache = new_cache(world, "cache")
+        services = Services(context=world.context, cache=cache, session_key=SESSION_KEY)
+        return cls(services=services, validator=validator)
 
-    def post(
-        self, body: object, token: str = "good", session_id: str | None = OWN
-    ) -> Mapping[str, object]:
+    def post(self, body: object, token: str = "good") -> Mapping[str, object]:
         """POST to /mcp.
 
         Args:
             body: The JSON-RPC body.
             token: The bearer token.
-            session_id: The session header (by default this client's session),
-                or None for no header.
 
         Returns:
             The HTTP response.
         """
         event = request("POST", "/mcp", body, token)
-        if session_id is not None:
-            headers = jsonvalue.as_dict(event["headers"])
-            event = {
-                **event,
-                "headers": {
-                    **headers,
-                    HEADER: self.session_id if session_id == OWN else session_id,
-                },
-            }
         return route(event, self.services, self.validator, TOOLS)
 
     def rpc(
@@ -182,3 +150,50 @@ def error_text(result: Mapping[str, object]) -> str:
     return jsonvalue.get_str(
         jsonvalue.as_dict(jsonvalue.get_list(result, "content")[0]), "text"
     )
+
+
+def built(world: World, build: Build) -> Services:
+    """Services for a fake deployment of a given build.
+
+    Args:
+        world: The environment.
+        build: The build.
+
+    Returns:
+        The services.
+    """
+    return Services(
+        context=world.context,
+        cache=new_cache(world, "cache"),
+        session_key=SESSION_KEY,
+        build=build,
+    )
+
+
+def with_headers(
+    body: object, extra: Mapping[str, str], method: str = "POST"
+) -> Mapping[str, object]:
+    """Build a request to /mcp with a good token and extra headers.
+
+    Args:
+        body: The JSON-RPC body.
+        extra: Extra request headers (lowercase names).
+        method: The HTTP method.
+
+    Returns:
+        The event.
+    """
+    event = request(method, "/mcp", body, "good")
+    return {**event, "headers": {**jsonvalue.as_dict(event["headers"]), **extra}}
+
+
+def json_body(response: Mapping[str, object]) -> Mapping[str, object]:
+    """Decode a JSON response body.
+
+    Args:
+        response: The HTTP response.
+
+    Returns:
+        The body.
+    """
+    return jsonvalue.loads_dict(jsonvalue.as_str(response["body"]))

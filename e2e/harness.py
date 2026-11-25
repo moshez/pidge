@@ -362,7 +362,6 @@ class Stack:
         self.function: str | None = None
         self.function_port = free_port()
         self.offset = 0
-        self.session_id: str | None = None
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -655,18 +654,15 @@ class Stack:
     def rpc(
         self, method: str, params: object = None, token: str | None = None
     ) -> object:
-        """Make a JSON-RPC call, initializing an MCP session first if needed."""
-        bearer = self.emulator.token(self.now()) if token is None else token
-        if method != "initialize" and self.session_id is None:
-            self.rpc("initialize", {"protocolVersion": "2025-11-25"}, bearer)
         body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
-        status, headers, reply = self.http(
-            "POST", "/mcp", body, bearer, self.session_id
+        status, _, reply = self.http(
+            "POST",
+            "/mcp",
+            body,
+            self.emulator.token(self.now()) if token is None else token,
         )
         if status != 200 or not isinstance(reply, dict) or "result" not in reply:
             raise AssertionError(f"{method}: {status} {reply}")
-        if method == "initialize":
-            self.session_id = headers["mcp-session-id"]
         return reply["result"]
 
     def tool(self, tool: str, /, **arguments: object) -> object:

@@ -5,14 +5,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 
 from . import jsonvalue
-from .mcpsession import (
-    EXPIRED_MESSAGE,
-    HEADER,
-    SESSION_EXPIRED,
-    check,
-    issue,
-    log_expiry,
-)
+from .refresh import NAME as REFRESH_TOOLS
 from .toolkit import Services, Tool, ToolError
 
 SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -31,7 +24,8 @@ CLIENT_EXAMPLE = (
 INSTRUCTIONS = (
     "This is a personal mailbox. Search first, then read messages by id. "
     "Sending is asynchronous: send_email returns an outbox id; search "
-    "tags=['outbox'] to see what is still queued.\n\n"
+    "tags=['outbox'] to see what is still queued.\n"
+    f"If a tool you expected is missing, call {REFRESH_TOOLS}.\n\n"
     "For anything beyond a few tool calls (bulk triage, rendering the inbox "
     "or a message, walking all search pages), call get_session_token, then "
     f"in a shell clone {REPOSITORY} and use pidge_client with "
@@ -58,14 +52,17 @@ def initialize(
         params: The request parameters.
 
     Returns:
-        The server's capabilities.
+        The server's capabilities, with the build as ``serverInfo.version``.
     """
     requested = jsonvalue.get_str(params, "protocolVersion")
     version = requested if requested in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0]
+    build = services.build
+    record = dict(mcp="initialize", build=build.name, client=params.get("clientInfo"))
+    build.log(json.dumps(record, sort_keys=True))
     return {
         "protocolVersion": version,
-        "capabilities": {"tools": {"listChanged": False}},
-        "serverInfo": {"name": "pidge", "version": "1"},
+        "capabilities": {"tools": {"listChanged": True}},
+        "serverInfo": {"name": "pidge", "version": build.name},
         "instructions": INSTRUCTIONS,
     }
 
@@ -158,7 +155,8 @@ def call_tool(
         args = jsonvalue.get_dict(params, "arguments")
     except jsonvalue.JSONShapeError:
         raise RPCError(INVALID_PARAMS, "arguments must be an object") from None
-    return tool_result(by_name[name], services, args)
+    every = dataclasses.replace(services, tools=tools)
+    return tool_result(by_name[name], every, args)
 
 
 METHODS: Mapping[str, Method] = {
@@ -217,89 +215,52 @@ def run_method(
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class Answer:
-    """How to answer one MCP POST.
+    """The reply to one JSON-RPC message.
 
     Attributes:
-        status: The HTTP status.
-        headers: Extra response headers.
-        payload: The JSON-RPC response, or None for an empty body.
+        response: The response, or None for a notification.
+        announce: Whether to send ``notifications/tools/list_changed``
+            ahead of the response (a successful ``refresh_tools`` call).
     """
 
-    status: int
-    headers: Mapping[str, str]
-    payload: Mapping[str, object] | None
+    response: Mapping[str, object] | None
+    announce: bool = False
 
 
-def start_session(
-    services: Services, tools: Sequence[Tool], message: Mapping[str, object]
-) -> Answer:
-    """Answer ``initialize``, issuing a session ID if it succeeds.
+def announces(message: Mapping[str, object], response: Mapping[str, object]) -> bool:
+    """Tell whether a response answers a successful ``refresh_tools`` call.
 
     Args:
-        services: The services.
-        tools: The tools.
         message: The request.
+        response: Its response.
 
     Returns:
-        The answer.
+        True if the tool list should be re-announced with it.
     """
-    response = run_method(services, tools, message)
-    if "result" not in response:
-        return Answer(status=200, headers={}, payload=response)
-    params = jsonvalue.as_dict(message["params"])
-    session_id = issue(services.sessions, params.get("clientInfo"))
-    return Answer(status=200, headers={HEADER: session_id}, payload=response)
+    if message["method"] != "tools/call" or "result" not in response:
+        return False
+    return jsonvalue.get_dict(message, "params").get("name") == REFRESH_TOOLS
 
 
-def in_session(
-    services: Services, message: Mapping[str, object], session_id: str | None
-) -> Answer | None:
-    """Refuse a message unless its session ID was issued by this build.
-
-    Args:
-        services: The services.
-        message: The JSON-RPC message.
-        session_id: The ``Mcp-Session-Id`` header, or None if absent.
-
-    Returns:
-        A 404 answer telling the client to re-initialize, or None to proceed.
-    """
-    expired = check(services.sessions, session_id)
-    if expired is None:
-        return None
-    log_expiry(services.sessions, expired, session_id, message.get("method"))
-    payload = error_response(message.get("id"), SESSION_EXPIRED, EXPIRED_MESSAGE)
-    return Answer(status=404, headers={}, payload=payload)
-
-
-def handle_rpc(
-    services: Services, tools: Sequence[Tool], body: bytes, session_id: str | None
-) -> Answer:
+def handle_rpc(services: Services, tools: Sequence[Tool], body: bytes) -> Answer:
     """Handle one JSON-RPC message.
-
-    ``initialize`` starts a session; anything else needs a session ID issued
-    by this build, or it gets a 404 so that the client re-initializes.
 
     Args:
         services: The services.
         tools: The tools.
         body: The request body.
-        session_id: The ``Mcp-Session-Id`` header, or None if absent.
 
     Returns:
-        The answer: an empty 202 for a notification (or a client response).
+        The answer; its response is None for a notification (or a client
+        response).
     """
     try:
         message = jsonvalue.loads_dict(body)
     except (ValueError, jsonvalue.JSONShapeError):
-        payload = error_response(None, PARSE_ERROR, "expected a JSON object")
-        return Answer(status=200, headers={}, payload=payload)
-    if "method" not in message or message.get("id") is None:
-        return in_session(services, message, session_id) or Answer(
-            status=202, headers={}, payload=None
+        return Answer(
+            response=error_response(None, PARSE_ERROR, "expected a JSON object")
         )
-    if message["method"] == "initialize":
-        return start_session(services, tools, message)
-    return in_session(services, message, session_id) or Answer(
-        status=200, headers={}, payload=run_method(services, tools, message)
-    )
+    if "method" not in message or message.get("id") is None:
+        return Answer(response=None)
+    response = run_method(services, tools, message)
+    return Answer(response=response, announce=announces(message, response))

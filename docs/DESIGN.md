@@ -263,14 +263,9 @@ Results are ranked with FTS5's built-in `bm25()`.
 - **Streamable HTTP** in **stateless mode with JSON responses** (`stateless_http=True, json_response=True` in the Python SDK).
 - **Why stateless:** Lambda supports response streaming only on Node.js managed runtimes. Every tool here is plain request/response, so streaming isn't needed.
 - **Hosting:** a Lambda Function URL with auth type `NONE`. The function validates OAuth itself.
-- **Sessions expire on deploy, statelessly.** MCP clients cache `tools/list` and the `initialize` instructions for the life of a session, so a deploy that changes tools or instructions would go unseen. pidge stores no sessions; the session ID itself carries the build:
-  - The deploy workflow passes the commit SHA to Terraform (`TF_VAR_build`), which sets `PIDGE_BUILD` on the Lambda (`dev` when unset; the smoke test and e2e harness set their own).
-  - A successful `initialize` answers with `Mcp-Session-Id: <build>.<random>`, where the random part is 128 bits from `secrets`, URL-safe base64 (visible ASCII only, as the spec requires).
-  - Every other message, request or notification, must carry an ID whose build part is the running build. A different build, a malformed ID or **no header at all** gets HTTP 404 with a JSON-RPC error (code `-32001`, "session expired; re-initialize"). Per the streamable HTTP spec, a client that gets 404 for a request carrying a session ID must start a new session with a fresh `initialize`.
-  - **Deliberate deviation:** the spec says a request missing a required session ID SHOULD get 400. pidge answers 404 instead, because clients that were never issued an ID (claude.ai connections made before this scheme) must be pushed to re-initialize too, and 400 would not do that.
-  - Authentication still comes first: an unauthenticated request gets 401 whatever its session header. `DELETE` (ending a session) gets 405, since there is nothing to end. Capabilities stay `tools.listChanged: false`.
-  - Each `initialize` logs one JSON line (`mcp=initialize`, `build`, `client` = the client's `clientInfo`), and each refusal logs one (`mcp=expired`, `reason` = `absent`/`stale`/`malformed`, `build`, `old_build` for stale IDs, `method`). Together they show whether claude.ai re-initializes after a deploy.
-  - `pidge_client` initializes before its first request, echoes the ID, and on a 404 re-initializes once and retries once.
+- **No sessions; tool-list changes reach claude.ai only in new conversations.** claude.ai caches `tools/list` per conversation, so a deployed tool or instruction change shows up in new conversations only. MCP revision [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/changelog) removed protocol-level sessions from Streamable HTTP, so pidge neither issues nor checks `Mcp-Session-Id` (an earlier attempt to expire sessions on deploy with 404s was reverted: clients never re-initialized, and under 2026-07-28 a 404 means "method not found"). That revision's replacement for change notifications, a long-lived `subscriptions/listen` stream, doesn't fit a request-scoped Lambda.
+- **Build identity:** the deploy workflow passes the commit SHA to Terraform (`TF_VAR_build`), which sets `PIDGE_BUILD` on the Lambda (`dev` when unset). `initialize` returns it as `serverInfo.version` and logs one JSON line (`mcp=initialize`, `build`, `client` = the client's `clientInfo`), which shows which deploy a client connected to.
+- **`refresh_tools`:** exists because claude.ai caches the tool list per conversation. It lists every tool (`name` plus the first sentence of its description) and the build, and `initialize` declares `tools.listChanged: true` and tells Claude to call it when a tool it expected is missing. Its `tools/call` reply is the one response sent as server-sent events (`text/event-stream`, `X-Accel-Buffering: no`, buffered in one Lambda reply): a `notifications/tools/list_changed` notification, then the result. Without `text/event-stream` in `Accept` it falls back to plain JSON. Whether claude.ai acts on the notification is untested; the result at least tells Claude which tools exist, so it can tell the user to start a new conversation.
 
 ### 8.2 Tools
 
@@ -283,6 +278,7 @@ Results are ranked with FTS5's built-in `bm25()`.
 | `tag_email` | `id`, `add?`, `remove?` | new tag set |
 | `list_tags` | — | tags with counts |
 | `get_session_token` | — | `{token, expires_at, endpoint}`: a 5-minute bearer token for scripts (§9.3) |
+| `refresh_tools` | — | `{tools: [{name, summary}], build}`, answered over SSE after a `notifications/tools/list_changed` (§8.1) |
 
 To see what's queued or stuck, search for `tags=["outbox"]`.
 

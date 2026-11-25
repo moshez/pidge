@@ -136,6 +136,7 @@ SEND_EMAIL = Signature(
     },
 )
 GET_SESSION_TOKEN = Signature(tool="get_session_token", params={})
+REFRESH_TOOLS = Signature(tool="refresh_tools", params={})
 SIGNATURES = (
     SEARCH,
     GET_MESSAGE,
@@ -144,6 +145,7 @@ SIGNATURES = (
     TAG_EMAIL,
     SEND_EMAIL,
     GET_SESSION_TOKEN,
+    REFRESH_TOOLS,
 )
 
 
@@ -322,3 +324,18 @@ def get_session_token(session: Session) -> Token:
         The token.
     """
     return models.parse_token(call(session, GET_SESSION_TOKEN, {}))
+
+
+def refresh_tools(session: Session) -> models.Refreshed:
+    """List every tool the server has, and its build.
+
+    The server sends ``notifications/tools/list_changed`` along with the
+    result (over SSE); the client ignores it.
+
+    Args:
+        session: The session.
+
+    Returns:
+        The tools (name and one-sentence summary) and the build.
+    """
+    return models.parse_refreshed(call(session, REFRESH_TOOLS, {}))

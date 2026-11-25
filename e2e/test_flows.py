@@ -22,6 +22,7 @@ from hamcrest import (
     empty,
     equal_to,
     has_item,
+    has_key,
     has_length,
     is_not,
     starts_with,
@@ -176,53 +177,48 @@ class TestFunctionUrl(EndToEnd):
                     "get_message",
                     "get_session_token",
                     "list_tags",
+                    "refresh_tools",
                     "search",
                     "send_email",
                     "tag_email",
                 ]
             ),
         )
-        token, session_id = self.stack.emulator.token(), self.stack.session_id
         note = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-        status, _, _ = self.stack.http("POST", "/mcp", note, token, session_id)
+        status, _, _ = self.stack.http(
+            "POST", "/mcp", note, self.stack.emulator.token()
+        )
         assert_that(status, equal_to(202))
         bad = {"jsonrpc": "2.0", "id": 2, "method": "no/such"}
-        _, _, reply = self.stack.http("POST", "/mcp", bad, token, session_id)
+        _, _, reply = self.stack.http("POST", "/mcp", bad, self.stack.emulator.token())
         assert isinstance(reply, dict)
         assert_that(reply["error"]["code"], equal_to(-32601))
 
-    def test_sessions_expire_with_the_build(self) -> None:
-        """initialize issues a session ID for this build; others get a 404."""
-        self.stack.rpc("initialize", {"protocolVersion": "2025-11-25"})
-        session_id = self.stack.session_id
-        assert session_id is not None
-        build, _, random = session_id.partition(".")
-        assert_that(build, equal_to(BUILD))
-        assert_that(len(random), equal_to(22))
+    def test_no_sessions(self) -> None:
+        """initialize names the build and sets no session; session IDs are ignored."""
         token = self.stack.emulator.token()
-        listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-        for label, header in [
-            ("current", session_id),
-            ("absent", None),
-            ("stale", f"other.{random}"),
-            ("malformed", "garbage"),
-        ]:
-            with self.subTest(label):
+        init = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        }
+        status, headers, reply = self.stack.http("POST", "/mcp", init, token)
+        assert_that(status, equal_to(200))
+        assert_that("mcp-session-id" in {k.lower() for k in headers}, equal_to(False))
+        assert isinstance(reply, dict)
+        assert_that(reply["result"]["serverInfo"]["version"], equal_to(BUILD))
+        listing = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+        for session_id in [None, "random-0123456789", f"stale.{'A' * 22}"]:
+            with self.subTest(session_id):
                 status, _, reply = self.stack.http(
-                    "POST", "/mcp", listing, token, header
+                    "POST", "/mcp", listing, token, session_id
                 )
+                assert_that(status, equal_to(200))
                 assert isinstance(reply, dict)
-                if label == "current":
-                    assert_that(status, equal_to(200))
-                    continue
-                assert_that(status, equal_to(404))
-                assert_that(reply["error"]["code"], equal_to(-32001))
-        stale = self.stack.http("POST", "/mcp", listing, None, f"other.{random}")
-        assert_that(stale[0], equal_to(401))
-        assert_that(
-            self.stack.http("DELETE", "/mcp", None, token, session_id)[0],
-            equal_to(405),
-        )
+                assert_that(reply, has_key("result"))
+        status = self.stack.http("DELETE", "/mcp", None, token, "x")[0]
+        assert_that(status, equal_to(405))
 
     def test_session_token(self) -> None:
         """A session token works like an OAuth one until it expires."""

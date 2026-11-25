@@ -13,7 +13,7 @@ from .checks import failure
 from .cognito import FakeCognito
 from .fakes import make_world, new_cache
 from .flaky import GOOD
-from .sessionkey import SESSION_KEY, predictable_sessions
+from .sessionkey import SESSION_KEY
 
 STOPPED = {"active_rule_set": None, "reserved_concurrency": 0}
 
@@ -28,7 +28,6 @@ class TestKillSwitch(unittest.TestCase):
             context=world.context,
             cache=new_cache(world, "c"),
             session_key=SESSION_KEY,
-            sessions=predictable_sessions(print),
         )
         self.account = Account.create()
         self.app = App(

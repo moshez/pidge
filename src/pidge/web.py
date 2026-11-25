@@ -7,8 +7,8 @@ from collections.abc import Mapping, Sequence
 
 from . import jsonvalue
 from .auth import AuthError, ScopeError, BearerValidator
-from .mcp import handle_rpc
-from .mcpsession import HEADER
+from .mcp import Answer, handle_rpc
+from .refresh import LIST_CHANGED
 from .toolkit import Services, Tool
 
 MCP_PATH = "/mcp"
@@ -123,17 +123,51 @@ def bearer_token(event: Mapping[str, object]) -> str:
     return token.strip() if scheme.lower() == "bearer" else ""
 
 
-def session_header(event: Mapping[str, object]) -> str | None:
-    """Read the ``Mcp-Session-Id`` header (Function URLs lowercase names).
+def accepts_events(event: Mapping[str, object]) -> bool:
+    """Tell whether the client accepts a ``text/event-stream`` reply.
 
     Args:
         event: The Function URL event.
 
     Returns:
-        The header, or None if absent.
+        True if the Accept header lists ``text/event-stream``.
     """
-    value = jsonvalue.get_dict(event, "headers").get(HEADER)
-    return None if value is None else str(value)
+    accept = jsonvalue.get_str(jsonvalue.get_dict(event, "headers"), "accept")
+    return "text/event-stream" in accept.lower()
+
+
+def event_stream(messages: Sequence[Mapping[str, object]]) -> Response:
+    """Build an SSE reply carrying JSON-RPC messages, buffered in one body.
+
+    Args:
+        messages: The messages, one event each, in order.
+
+    Returns:
+        The response.
+    """
+    body = "".join(
+        f"event: message\ndata: {json.dumps(message)}\n\n" for message in messages
+    )
+    headers = {"content-type": "text/event-stream", "x-accel-buffering": "no"}
+    return {"statusCode": 200, "headers": headers, "body": body}
+
+
+def http_reply(event: Mapping[str, object], answer: Answer) -> Response:
+    """Turn a JSON-RPC answer into an HTTP response.
+
+    Args:
+        event: The Function URL event (for its Accept header).
+        answer: The answer.
+
+    Returns:
+        202 for a notification; SSE for a re-announcement the client
+        accepts; JSON otherwise.
+    """
+    if answer.response is None:
+        return {"statusCode": 202, "headers": {}, "body": ""}
+    if answer.announce and accepts_events(event):
+        return event_stream([LIST_CHANGED, answer.response])
+    return json_response(200, answer.response, {})
 
 
 def serve_mcp(
@@ -164,10 +198,7 @@ def serve_mcp(
     except ScopeError:
         return challenge(event, 403, "insufficient_scope")
     per_request = dataclasses.replace(services, endpoint=resource)
-    answer = handle_rpc(per_request, tools, request_body(event), session_header(event))
-    if answer.payload is None:
-        return {"statusCode": answer.status, "headers": answer.headers, "body": ""}
-    return json_response(answer.status, answer.payload, answer.headers)
+    return http_reply(event, handle_rpc(per_request, tools, request_body(event)))
 
 
 def route(
@@ -195,6 +226,5 @@ def route(
     if path != MCP_PATH:
         return json_response(404, {"error": "not found"}, {})
     if method != "POST":
-        # Including DELETE of a session: there is no session state to end.
         return json_response(405, {"error": "use POST"}, {"allow": "POST"})
     return serve_mcp(event, services, validator, tools)

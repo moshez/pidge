@@ -4,7 +4,6 @@ import contextlib
 import dataclasses
 import email.utils
 import http.server
-import json
 import pathlib
 import threading
 import unittest
@@ -12,13 +11,15 @@ from collections.abc import Iterator, Mapping, Sequence
 
 import pidge.tests
 from pidge.mcp import handle_rpc
+from pidge.web import http_reply
 from pidge.memstore import MemoryStore
 from pidge.store import NotFound
 from pidge.tests.fakes import World, deliver, make_world, new_cache, sample_raw
 from pidge.tests.mcpclient import TOOLS
-from pidge.tests.sessionkey import SESSION_KEY, predictable_sessions
+from pidge.tests.sessionkey import SESSION_KEY
 from pidge.toolkit import Services
 
+from .. import jsonshape
 from ..transport import Reply, Session, Transport
 
 TOKEN = "test-token"
@@ -52,14 +53,22 @@ class InProcess:
             body: The request body.
 
         Returns:
-            401 for a wrong token, else what pidge answers.
+            401 for a wrong token, 202 for a notification, else the JSON-RPC
+            response.
         """
         if headers.get("Authorization") != f"Bearer {self.token}":
             return Reply(status=401, body=b'{"error": "invalid_token"}')
-        session_id = headers.get("Mcp-Session-Id")
-        answer = handle_rpc(self.services, TOOLS, body, session_id)
-        payload = b"" if answer.payload is None else json.dumps(answer.payload).encode()
-        return Reply(status=answer.status, body=payload, headers=answer.headers)
+        answer = handle_rpc(self.services, TOOLS, body)
+        event = {"headers": {"accept": headers.get("Accept", "")}}
+        response = http_reply(event, answer)
+        return Reply(
+            status=jsonshape.as_int(response["statusCode"]),
+            body=jsonshape.as_str(response["body"]).encode(),
+            headers={
+                name: jsonshape.as_str(value)
+                for name, value in jsonshape.as_dict(response["headers"]).items()
+            },
+        )
 
     def get(self, url: str) -> Reply:
         """Serve a presigned ``memory:`` URL from the store.
@@ -106,7 +115,6 @@ def empty_mailbox(case: unittest.TestCase) -> Mailbox:
         context=world.context,
         cache=new_cache(world, "cache"),
         session_key=SESSION_KEY,
-        sessions=predictable_sessions(print),
         endpoint=ENDPOINT,
     )
     transport = InProcess(services=services, store=world.store)
@@ -199,9 +207,9 @@ class Handler(http.server.BaseHTTPRequestHandler):  # noqa: SLD401,SLD504
     def do_POST(self) -> None:  # noqa: N802
         """Serve a POST."""
         body = self.rfile.read(int(self.headers["Content-Length"]))
-        headers = {"Authorization": self.headers.get("Authorization", "")}
-        if "Mcp-Session-Id" in self.headers:
-            headers["Mcp-Session-Id"] = self.headers["Mcp-Session-Id"]
+        headers = {
+            name: self.headers.get(name, "") for name in ("Authorization", "Accept")
+        }
         self.answer(self.transport.post(self.path, headers, body))
 
     def do_GET(self) -> None:  # noqa: N802
