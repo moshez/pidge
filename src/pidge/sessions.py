@@ -206,7 +206,10 @@ GET_SESSION_TOKEN = Tool(
         "Get a bearer token, valid for 5 minutes, that lets a script call this "
         "MCP server directly: POST JSON-RPC to `endpoint` with the header "
         "`Authorization: Bearer <token>`. It has the same tools and access as "
-        "this connection. Cheap to call; get a new one when it expires."
+        "this connection. Cheap to call; get a new one when it expires. It is "
+        "for pidge_client (or any MCP client) calling the endpoint directly: "
+        "clone https://github.com/moshez/pidge and set "
+        "PYTHONPATH=<clone>/client/src."
     ),
     schema=schema({}, []),
     run=run_get_session_token,

@@ -11,10 +11,24 @@ PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
+REPOSITORY = "https://github.com/moshez/pidge"
+CLIENT_EXAMPLE = (
+    "import datetime\n"
+    "from pidge_client import SearchArgs, Session, iter_search, views\n"
+    'session = Session(endpoint="<endpoint>", token="<token>")\n'
+    'hits = list(iter_search(session, SearchArgs(tags=["inbox"])))\n'
+    "print(views.render_inbox(hits, datetime.datetime.now().astimezone()))\n"
+)
 INSTRUCTIONS = (
     "This is a personal mailbox. Search first, then read messages by id. "
     "Sending is asynchronous: send_email returns an outbox id; search "
-    "tags=['outbox'] to see what is still queued."
+    "tags=['outbox'] to see what is still queued.\n\n"
+    "For anything beyond a few tool calls (bulk triage, rendering the inbox "
+    "or a message, walking all search pages), call get_session_token, then "
+    f"in a shell clone {REPOSITORY} and use pidge_client with "
+    "PYTHONPATH=<clone>/client/src: no install needed, stdlib only. Keep "
+    "results in the script and print only what's needed. For example:\n\n"
+    + CLIENT_EXAMPLE
 )
 
 Method = Callable[[Services, Sequence[Tool], Mapping[str, object]], object]

@@ -9,3 +9,4 @@ Serverless mailbox with an MCP interface
 
    quick-start
    api-reference
+   client
