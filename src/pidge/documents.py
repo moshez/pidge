@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 
 from . import jsonvalue, ulid
 from .model import Meta
+from .ordering import Order, Position
 
 _TERM = re.compile(r"[^\W_]+")
 SNIPPET_CHARS = 160
@@ -41,6 +42,9 @@ class Query:
         tags: Tags that must all be present.
         has_attachments: Filter on attachments; None for either.
         limit: The maximum number of results.
+        order: How to list the results.
+        cursor: Only messages whose ``(date, ulid)`` sorts before this
+            position; None for no cursor.
     """
 
     terms: Sequence[str] = ()
@@ -51,6 +55,8 @@ class Query:
     tags: Sequence[str] = ()
     has_attachments: bool | None = None
     limit: int = 20
+    order: Order = Order.RELEVANCE
+    cursor: Position | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -154,6 +160,20 @@ def searchable_text(doc: IndexDoc) -> Sequence[str]:
     return words(" ".join(parts))
 
 
+def before_position(date: int, doc_id: str, cursor: Position | None) -> bool:
+    """Check whether a message comes after a cursor in date order.
+
+    Args:
+        date: The message's date.
+        doc_id: The message's ID.
+        cursor: The cursor, or None.
+
+    Returns:
+        True if there is no cursor or the message sorts before it.
+    """
+    return cursor is None or (date, doc_id) < (cursor.date, cursor.ulid)
+
+
 def matches(doc: IndexDoc, query: Query) -> bool:
     """Check a tail message against a query, the way the index would.
 
@@ -175,6 +195,7 @@ def matches(doc: IndexDoc, query: Query) -> bool:
         not query.before or date < query.before,
         set(query.tags) <= set(doc.meta.tags),
         query.has_attachments in (None, bool(attachment_names(doc))),
+        before_position(date, doc.ulid, query.cursor),
     ]
     return all(checks)
 

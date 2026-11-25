@@ -224,10 +224,17 @@ Results are ranked with FTS5's built-in `bm25()`.
    - Fetch those messages' `headers.json`, `body.txt` and `meta.json` with a thread pool.
    - Match them in Python using the same query language: terms plus structured filters.
 3. **Merge:**
-   - Ranked index hits first, then tail hits by date, labeled unranked.
-   - Dedupe by ULID, since a message can show up on both sides if indexing runs mid-search.
+   - **Relevance order** (the default when the query has terms): ranked index hits first, then tail hits by date, labeled unranked.
+   - **Date order** (the default without terms, or `order="date"`; terms are then only a filter): index and tail hits in one newest-first order by `(date, ulid)`. Tail hits are usually the newest mail, so listing them after the index would drop them once the limit is reached.
+   - Dedupe by ULID, since a message can show up on both sides if indexing runs mid-search. Then cut to the limit.
+4. **Paging (date order only):**
+   - Keyset paging on `(date, ulid)`, not offsets. The result set is rebuilt on every call from the shards plus the tail, and messages move between them (indexing, tag changes), so offsets would skip or repeat. A message's date and ULID never change, so a keyset cursor stays correct.
+   - The cursor is the base64url of `{date}:{ulid}` of the last hit returned. `date` is the sender's Date header, not arrival time, so same-second collisions are common in bulk mail; the ULID breaks ties.
+   - Both sides apply the same predicate: SQL `(m.date < ? OR (m.date = ? AND m.id < ?))` in the shards, `(date, ulid) < (cursor_date, cursor_id)` in the tail matcher.
+   - Each shard is queried with `LIMIT limit + 1`; if more than `limit` hits survive the merge, the response carries `next_cursor` from the last returned hit, else `null`.
+   - Relevance order is not pageable: bm25 scores are per shard (each yearly shard has its own corpus statistics) and change when shards are rewritten, so there is no stable cursor over them. A `cursor` with relevance order is an error.
 
-**Keep the query language minimal** (terms, `from`, `to`, `after`, `before`, `tags`, `has_attachments`) so the naive tail matcher and FTS5 agree.
+**Keep the query language minimal** (terms, `from`, `to`, `after`, `before`, `tags`, `has_attachments`, the cursor) so the naive tail matcher and FTS5 agree.
 
 ### 6.4 Sizing
 
@@ -261,7 +268,7 @@ Results are ranked with FTS5's built-in `bm25()`.
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `search` | `query`, `from?`, `to?`, `after?`, `before?`, `tags?`, `has_attachments?`, `limit?` | list of `{id, date, from, subject, snippet, tags, ranked}` |
+| `search` | `query`, `from?`, `to?`, `after?`, `before?`, `tags?`, `has_attachments?`, `limit?`, `order?` (`date` or `relevance`; default `relevance` with terms, else `date`), `cursor?` (date order only) | `results`: list of `{id, date, from, subject, snippet, tags, ranked}`; `next_cursor`: string for the next date-order page, or `null` (§6.3) |
 | `get_message` | `id` | headers, body text, attachment list, tags. The attachment list (`headers.attachments`) has `{name, content_type, size, kind}` for every file under `attachments/`: `0-body.html` (kind `body`) first when the message has an HTML body, then attachments (`attachment`), then inline parts (`inline`) |
 | `get_attachment` | `id`, `name` | short-lived presigned S3 URL. Bytes would hit Lambda's response-size limit. Works for any listed name, `0-body.html` included |
 | `send_email` | `to`, `cc?`, `bcc?`, `subject`, `body`, `in_reply_to_id?`, `from?` (sender under `mail_domain`), `attach_from?` (existing attachment refs) | outbox ID |

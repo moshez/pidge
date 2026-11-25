@@ -11,6 +11,7 @@ from .docstore import LIST_LIMIT, marker_id, shard_keys, tail_docs
 from .ports import ShardSource
 from .records import DIRTY
 from .documents import Hit, Query, matches, tail_hit
+from .ordering import by_date
 from .shard import search_shard
 from .store import NotFound, NotModified, ObjectStore
 
@@ -95,7 +96,38 @@ def newest_first(hits: Iterable[Hit]) -> Sequence[Hit]:
     return sorted(hits, key=lambda hit: (hit.date, hit.ulid), reverse=True)
 
 
-def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[Hit]:
+def unique(hits: Iterable[Hit]) -> Sequence[Hit]:
+    """Drop repeated hits, keeping the first of each ID.
+
+    Args:
+        hits: The hits, in order.
+
+    Returns:
+        The hits without duplicates, in the same order.
+    """
+    seen: set[str] = set()
+    kept = []
+    for candidate in hits:
+        if candidate.ulid not in seen:
+            seen.add(candidate.ulid)
+            kept.append(candidate)
+    return kept
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Page:
+    """One page of search results.
+
+    Attributes:
+        hits: The hits, at most the query's limit.
+        more: Whether more hits matched than were returned.
+    """
+
+    hits: Sequence[Hit]
+    more: bool
+
+
+def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Page:
     """Combine index hits and tail hits.
 
     Args:
@@ -104,24 +136,20 @@ def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[
         query: The query (for ordering and the limit).
 
     Returns:
-        Index hits first (by score, or by date without terms), then tail hits
-        by date, without duplicates.
+        In relevance order, ranked index hits by score, then tail hits by
+        date. In date order, all hits in one newest-first order. Either way
+        without duplicates (the tail copy wins) and cut to the limit.
     """
-    if query.terms:
-        first: Sequence[Hit] = sorted(ranked, key=lambda hit: hit.score or 0.0)
+    tail_hits = list(tail)
+    if by_date(query.order, query.terms):
+        merged = unique(newest_first([*tail_hits, *ranked]))
     else:
-        first = newest_first(ranked)
-    rest = newest_first(tail)
-    seen: set[str] = set()
-    merged = []
-    for hit in [*first, *rest]:
-        if hit.ulid not in seen:
-            seen.add(hit.ulid)
-            merged.append(hit)
-    return merged[: query.limit]
+        first = sorted(ranked, key=lambda hit: hit.score or 0.0)
+        merged = unique([*first, *newest_first(tail_hits)])
+    return Page(hits=merged[: query.limit], more=len(merged) > query.limit)
 
 
-def search(store: ObjectStore, cache: ShardSource, query: Query) -> Sequence[Hit]:
+def search(store: ObjectStore, cache: ShardSource, query: Query) -> Page:
     """Search the mailbox.
 
     Args:
@@ -130,7 +158,7 @@ def search(store: ObjectStore, cache: ShardSource, query: Query) -> Sequence[Hit
         query: The query.
 
     Returns:
-        The hits.
+        A page of hits.
     """
     tail = tail_docs(store)
     exclude = set(tail) | {

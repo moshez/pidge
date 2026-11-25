@@ -61,7 +61,7 @@ def found(store: ObjectStore, cache: ShardSource, query: Query) -> Sequence[str]
     Returns:
         The IDs, in order.
     """
-    return [hit.ulid for hit in search(store, cache, query)]
+    return [hit.ulid for hit in search(store, cache, query).hits]
 
 
 class TestSearch(unittest.TestCase):
@@ -97,7 +97,7 @@ class TestSearch(unittest.TestCase):
         Returns:
             The hits.
         """
-        return search(self.store, self.cache, Query(terms=[word]))
+        return search(self.store, self.cache, Query(terms=[word])).hits
 
     def test_indexed(self) -> None:
         """Indexed messages are found by words and by filters."""
@@ -184,7 +184,7 @@ class TestIndexer(unittest.TestCase):
         for _ in range(2):
             assert_that(failure(lambda: run_tracked(broken)), instance_of(OSError))
         cache = new_cache(world, "c")
-        ops = search(broken.store, cache, Query(tags=["ops"]))
+        ops = search(broken.store, cache, Query(tags=["ops"])).hits
         subject = "[pidge ops] The search indexer has failed 2 times in a row"
         assert_that([hit.subject for hit in ops], equal_to([subject]))
         assert_that(run_tracked(broken), equal_to(2))
@@ -230,4 +230,4 @@ class TestEdges(unittest.TestCase):
         hit = Hit(
             ulid="A", date=1, sender="", subject="", snippet="", tags=(), score=None
         )
-        assert_that(merge([hit], [hit], Query()), contains_exactly(hit))
+        assert_that(merge([hit], [hit], Query()).hits, contains_exactly(hit))
