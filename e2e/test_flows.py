@@ -117,6 +117,19 @@ class EndToEnd(unittest.TestCase):
     def outbox(self, outbox_id: str) -> Mapping[str, object]:
         return self.stack.read_json(f"outbox/{outbox_id}/state.json")
 
+    def local_url(self, presigned: str) -> str:
+        """Point a presigned URL at the emulator's host port."""
+        url = urllib.parse.urlparse(presigned)
+        assert_that(url.hostname, equal_to(CONTAINER_HOST))
+        return url._replace(netloc=f"127.0.0.1:{self.stack.emulator.port}").geturl()
+
+    def download(self, ulid: str, name: str, **extra: object) -> bytes:
+        """Fetch an attachment through get_attachment's presigned link."""
+        link = self.stack.tool("get_attachment", id=ulid, name=name, **extra)
+        assert isinstance(link, dict)
+        data: bytes = urllib.request.urlopen(self.local_url(link["url"])).read()
+        return data
+
 
 class TestFunctionUrl(EndToEnd):
     """OAuth resource-server behaviour at the Function URL."""
@@ -261,19 +274,6 @@ class TestInbound(EndToEnd):
         name = read["headers"]["attachments"][0]["name"]
         assert_that(self.download(ulid, name), equal_to(b"%PDF-1.7 data"))
         assert_that(self.stack.tool("list_tags"), equal_to({"tags": {"inbox": 1}}))
-
-    def local_url(self, presigned: str) -> str:
-        """Point a presigned URL at the emulator's host port."""
-        url = urllib.parse.urlparse(presigned)
-        assert_that(url.hostname, equal_to(CONTAINER_HOST))
-        return url._replace(netloc=f"127.0.0.1:{self.stack.emulator.port}").geturl()
-
-    def download(self, ulid: str, name: str, **extra: object) -> bytes:
-        """Fetch an attachment through get_attachment's presigned link."""
-        link = self.stack.tool("get_attachment", id=ulid, name=name, **extra)
-        assert isinstance(link, dict)
-        data: bytes = urllib.request.urlopen(self.local_url(link["url"])).read()
-        return data
 
     def test_html_body_renders_from_local_files(self) -> None:
         """0-body.html and the files it references download into one directory."""
