@@ -278,6 +278,12 @@ Results are ranked with FTS5's built-in `bm25()`.
 
 To see what's queued or stuck, search for `tags=["outbox"]`.
 
+### 8.3 The client (`client/`, `pidge_client`)
+
+- `initialize` returns `instructions` that, after the mailbox basics, point Claude at `pidge_client` for anything beyond a few tool calls: call `get_session_token`, clone the repository, set `PYTHONPATH=<clone>/client/src`, with a five-line example (`mcp.CLIENT_EXAMPLE`). The `get_session_token` description carries the same pointer. Both strings load into every session that has the connector, so they stay short.
+- `pidge_client` is a second distribution (`pidge-client`) in the same repository: standard library only, so a clone plus `PYTHONPATH` is enough. Layers: `transport` (JSON-RPC `tools/call` over a pluggable transport; urllib by default), `calls` (one typed wrapper per tool), `workflows` (`iter_search` over `next_cursor`, `fetch_body_html` through the presigned URL, `archive`), `views` (pure HTML renderers for chat fragments and standalone pages).
+- `pidge` never imports `pidge_client` and vice versa; the client's tests import both. They run every call through `handle_rpc` in-process, fail on any drift between the client's declared tool signatures and `tools/list`, execute `CLIENT_EXAMPLE` against an in-process HTTP server, and compare rendered fixtures with golden files.
+
 ---
 
 ## 9. Authentication

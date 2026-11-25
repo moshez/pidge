@@ -1,9 +1,9 @@
 .ipynb_checkpoints
 *.egg-info
 __pycache__
-/dist
-/build
-/git-log-head
+dist/
+build/
+git-log-head
 # OpenTofu
 .terraform/
 .terraform.lock.hcl

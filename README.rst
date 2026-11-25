@@ -33,45 +33,19 @@ itself (HS256, with a key in SSM Parameter Store); expired or tampered tokens
 get a 401. So an agent can call ``get_session_token`` once, then run a script
 whose tool results stay in the script and only its printed output comes back.
 
-The server is stateless JSON-RPC, so a client is one POST per call:
-
-.. code-block:: python
-
-    import json
-    import sys
-
-    import httpx
-
-    token, endpoint = sys.argv[1], sys.argv[2]
-
-
-    def call(name, **arguments):
-        reply = httpx.post(
-            endpoint,
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": name, "arguments": arguments},
-            },
-            timeout=60,
-        )
-        reply.raise_for_status()
-        result = reply.json()["result"]
-        if result["isError"]:
-            raise RuntimeError(result["content"][0]["text"])
-        return result["structuredContent"]
-
-
-    for hit in call("search", query="invoice", limit=5)["results"]:
-        print(hit["date"], hit["from"], hit["subject"], sep=" | ")
+For scripts, use ``pidge_client`` (in ``client/``): a client that needs only
+the Python standard library, plus HTML views of mail. Clone this repository
+and set ``PYTHONPATH=<clone>/client/src``; no install. See ``doc/client.rst``.
+The server's ``initialize`` instructions point Claude at it, with an example.
 
 Layout
 ------
 
 ``src/pidge/``
     The Lambda code (``pidge.lambda_main.lambda_handler``) and its tests.
+``client/``
+    ``pidge-client``, the stdlib-only client and mail views, with its own
+    ``noxfile.py``; its tests run against ``pidge`` in-process.
 ``Dockerfile``
     The Lambda container image.
 ``infra/bootstrap/``
