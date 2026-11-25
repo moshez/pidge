@@ -413,8 +413,12 @@ class TestOutbound(EndToEnd):
         )
         assert isinstance(reserved, dict)
         assert_that(reserved["url"], contains_string("content-length"))
+        # urllib would send form-urlencoded, which moto parses away.
         put = urllib.request.Request(
-            self.local_url(reserved["url"]), data=data, method="PUT"
+            self.local_url(reserved["url"]),
+            data=data,
+            method="PUT",
+            headers={"Content-Type": "application/octet-stream"},
         )
         urllib.request.urlopen(put).read()
         outbox_id = self.send(

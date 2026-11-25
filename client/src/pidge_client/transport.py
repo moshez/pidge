@@ -166,7 +166,8 @@ class UrllibTransport:
         Returns:
             The response.
         """
-        request = urllib.request.Request(url, data=body, method="PUT")
+        octets = {"Content-Type": "application/octet-stream"}
+        request = urllib.request.Request(url, data=body, headers=octets, method="PUT")
         return send(request, self._timeout)
 
 
