@@ -267,6 +267,7 @@ Results are ranked with FTS5's built-in `bm25()`.
 | `send_email` | `to`, `cc?`, `bcc?`, `subject`, `body`, `in_reply_to_id?`, `from?` (sender under `mail_domain`), `attach_from?` (existing attachment refs) | outbox ID |
 | `tag_email` | `id`, `add?`, `remove?` | new tag set |
 | `list_tags` | — | tags with counts |
+| `get_session_token` | — | `{token, expires_at, endpoint}`: a 5-minute bearer token for scripts (§9.3) |
 
 To see what's queued or stuck, search for `tags=["outbox"]`.
 
@@ -294,6 +295,13 @@ To see what's queued or stuck, search for `tags=["outbox"]`.
 - **Dynamic client registration** (RFC 7591) is enabled on the pool, so MCP clients register themselves.
   - It shipped in Cognito in November 2026. If the Terraform AWS provider doesn't support the setting yet, set it with an `aws` CLI `local-exec`.
   - Open registration lets anyone register a client. They still can't get a token without signing in as the pool's only user.
+
+### 9.3 Session tokens (scripts)
+
+- `get_session_token` mints an HS256 JWT (`iss = pidge-session`, `aud` = the MCP endpoint URL, `exp` = now + 5 minutes) so a script can call the endpoint directly with `Authorization: Bearer <token>`.
+- The signing key is a 64-character random value in the SSM SecureString `/pidge/session-signing-key` (Terraform `random_password`, encrypted with `aws/ssm`). The Lambda reads it on first use (env `SESSION_KEY_PARAMETER`).
+- The endpoint routes by the token header: `alg = HS256` goes to the session validator, anything else to the Cognito validator. A valid session token gets every tool, the same as a Cognito token with `mail/full`; expired, badly signed or mis-addressed ones get a 401.
+- Nothing in front of the function checks tokens (the Function URL's auth type is `NONE`), so no AWS-side change was needed.
 
 ---
 
@@ -371,6 +379,7 @@ Applied once from a laptop with admin credentials. Local state is fine, or migra
   - Role and policy.
   - Function URL.
   - `aws_lambda_permission` for S3 and EventBridge.
+  - The session-token signing key (`random_password` → SSM SecureString, §9.3).
 - **SES:**
   - Domain identity plus `aws_ses_domain_dkim`.
   - Optional MAIL FROM.

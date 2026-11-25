@@ -61,11 +61,31 @@ data "aws_iam_policy_document" "lambda" {
     ]
     resources = [aws_cognito_user_pool.pidge.arn]
   }
+  # sessions.py: the key that signs get_session_token's bearer tokens.
+  statement {
+    sid       = "SessionKey"
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.session_key.arn]
+  }
   statement {
     sid       = "KillSwitchStopFunction"
     actions   = ["lambda:PutFunctionConcurrency"]
     resources = [local.function_arn]
   }
+}
+
+# Signs the 5-minute bearer tokens that get_session_token hands to scripts
+# (sessions.py). Encrypted with the account's aws/ssm key, which the Lambda
+# role may use through SSM without a KMS grant of its own.
+resource "random_password" "session_key" {
+  length  = 64
+  special = false
+}
+
+resource "aws_ssm_parameter" "session_key" {
+  name  = "/pidge/session-signing-key"
+  type  = "SecureString"
+  value = random_password.session_key.result
 }
 
 resource "aws_iam_role_policy" "lambda" {
@@ -97,6 +117,8 @@ resource "aws_lambda_function" "pidge" {
       MESSAGE_ID_DOMAIN = var.message_id_domain
       ISSUER            = "https://${aws_cognito_user_pool.pidge.endpoint}"
       USER_POOL_ID      = aws_cognito_user_pool.pidge.id
+      # sessions.py: SSM SecureString with the session-token signing key.
+      SESSION_KEY_PARAMETER = aws_ssm_parameter.session_key.name
       # budget.tf: SNS records from this topic trip the kill switch.
       KILL_SWITCH_TOPIC_ARN = aws_sns_topic.killswitch.arn
     }
