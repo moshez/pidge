@@ -1,7 +1,5 @@
 """Tests for the HTTP front end, the MCP server and the tools."""
 
-import base64
-import dataclasses
 import json
 import unittest
 from collections.abc import Mapping
@@ -18,140 +16,11 @@ from hamcrest import (
 
 from .. import jsonvalue
 from ..ingest import ingest
-from ..auth import BearerValidator
-from ..toolkit import Services
-from ..tools_read import READ_TOOLS
-from ..tools_write import WRITE_TOOLS
 from ..web import route
 from .checks import includes
+from .fakes import make_world, sample_raw
 from .flaky import GOOD
-from .fakes import World, make_world, new_cache, sample_raw
-
-HOST = "abc.lambda-url.us-east-2.on.aws"
-
-
-def request(method: str, path: str, body: object, token: str) -> Mapping[str, object]:
-    """Build a Function URL event.
-
-    Args:
-        method: The HTTP method.
-        path: The path.
-        body: The JSON body (bytes are sent base64-encoded as they are).
-        token: The bearer token, or empty for none.
-
-    Returns:
-        The event.
-    """
-    headers = {"authorization": f"Bearer {token}"} if token else {}
-    event: dict[str, object] = {
-        "rawPath": path,
-        "headers": headers,
-        "requestContext": {"domainName": HOST, "http": {"method": method}},
-    }
-    if isinstance(body, bytes):
-        event["body"] = base64.b64encode(body).decode()
-        event["isBase64Encoded"] = True
-    else:
-        event["body"] = json.dumps(body)
-    return event
-
-
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class Client:
-    """Calls the MCP endpoint of a fake deployment.
-
-    Attributes:
-        services: The services behind the endpoint.
-        validator: The token validator.
-    """
-
-    services: Services
-    validator: BearerValidator
-
-    @classmethod
-    def create(cls, world: World) -> "Client":
-        """Wire up a client.
-
-        Args:
-            world: The environment.
-
-        Returns:
-            The client.
-        """
-        cache = new_cache(world, "cache")
-        return cls(
-            services=Services(context=world.context, cache=cache), validator=GOOD
-        )
-
-    def post(self, body: object, token: str = "good") -> Mapping[str, object]:
-        """POST to /mcp.
-
-        Args:
-            body: The JSON-RPC body.
-            token: The bearer token.
-
-        Returns:
-            The HTTP response.
-        """
-        event = request("POST", "/mcp", body, token)
-        return route(event, self.services, self.validator, (*READ_TOOLS, *WRITE_TOOLS))
-
-    def rpc(self, method: str, params: object) -> Mapping[str, object]:
-        """Make a JSON-RPC call.
-
-        Args:
-            method: The method.
-            params: The parameters.
-
-        Returns:
-            The JSON-RPC response.
-        """
-        response = self.post(
-            {"jsonrpc": "2.0", "id": 7, "method": method, "params": params}
-        )
-        return jsonvalue.loads_dict(jsonvalue.as_str(response["body"]).encode())
-
-    def call(self, name: str, args: object) -> Mapping[str, object]:
-        """Call a tool.
-
-        Args:
-            name: The tool.
-            args: The arguments.
-
-        Returns:
-            The ``tools/call`` result.
-        """
-        return jsonvalue.get_dict(
-            self.rpc("tools/call", {"name": name, "arguments": args}), "result"
-        )
-
-
-def structured(result: Mapping[str, object]) -> Mapping[str, object]:
-    """Return a successful tool result's structured content.
-
-    Args:
-        result: The ``tools/call`` result.
-
-    Returns:
-        The structured content.
-    """
-    assert_that(result["isError"], equal_to(False))
-    return jsonvalue.get_dict(result, "structuredContent")
-
-
-def error_text(result: Mapping[str, object]) -> str:
-    """Return a failed tool result's message.
-
-    Args:
-        result: The ``tools/call`` result.
-
-    Returns:
-        The text.
-    """
-    assert_that(result["isError"], equal_to(True))
-    return jsonvalue.get_str(
-        jsonvalue.as_dict(jsonvalue.get_list(result, "content")[0]), "text"
-    )
+from .mcpclient import HOST, Client, error_text, request, structured
 
 
 class TestProtocol(unittest.TestCase):
@@ -159,7 +28,7 @@ class TestProtocol(unittest.TestCase):
 
     def setUp(self) -> None:
         """Create a client."""
-        self.client = Client.create(make_world(self))
+        self.client = Client.create(make_world(self), GOOD)
 
     def test_metadata(self) -> None:
         """The protected-resource metadata names the pool and scope."""
@@ -222,6 +91,7 @@ class TestProtocol(unittest.TestCase):
                 "list_tags",
                 "send_email",
                 "tag_email",
+                "get_session_token",
             ),
         )
 
@@ -256,7 +126,7 @@ class TestTools(unittest.TestCase):
     def setUp(self) -> None:
         """Create a client and receive one message."""
         self.world = make_world(self)
-        self.client = Client.create(self.world)
+        self.client = Client.create(self.world, GOOD)
         self.world.store.put(
             "inbound/a", sample_raw("Lunch", "Tacos?", {"menu.pdf": b"%"})
         )

@@ -62,6 +62,20 @@ class ConcurrencyClient(Protocol):
         """
 
 
+class SSMClient(Protocol):
+    """The subset of the boto3 ``ssm`` client that this module uses."""
+
+    def get_parameter(self, **kwargs: object) -> Mapping[str, object]:
+        """Read a parameter.
+
+        Args:
+            **kwargs: Request parameters.
+
+        Returns:
+            The response.
+        """
+
+
 class SESClient(Protocol):
     """The subset of the boto3 ``ses`` (v1) client that this module uses."""
 
@@ -230,3 +244,40 @@ class LambdaThrottle:
         self._client.put_function_concurrency(
             FunctionName=self._function, ReservedConcurrentExecutions=0
         )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class SsmSecret:
+    """A SecureString parameter, read on first use and then cached.
+
+    Construct it with :meth:`create`.
+    """
+
+    _client: SSMClient
+    _name: str
+    _cache: list[bytes]
+
+    @classmethod
+    def create(cls, client: SSMClient, name: str) -> "SsmSecret":
+        """Wrap a boto3 ``ssm`` client.
+
+        Args:
+            client: The client.
+            name: The parameter name.
+
+        Returns:
+            The secret.
+        """
+        return cls(_client=client, _name=name, _cache=[])
+
+    def value(self) -> bytes:
+        """Return the parameter's decrypted value.
+
+        Returns:
+            The value, UTF-8 encoded.
+        """
+        if not self._cache:
+            response = self._client.get_parameter(Name=self._name, WithDecryption=True)
+            parameter = jsonvalue.as_dict(response["Parameter"])
+            self._cache.append(jsonvalue.get_str(parameter, "Value").encode("utf-8"))
+        return self._cache[0]

@@ -49,6 +49,7 @@ OWNER = "owner@example.net"
 FUNCTION_HOST = "abc123.lambda-url.us-east-2.on.aws"
 RESOURCE = f"https://{FUNCTION_HOST}/mcp"
 SCOPE = f"{RESOURCE}/full"
+SESSION_KEY_PARAMETER = "/pidge/session-signing-key"
 KILL_SWITCH_TOPIC = "arn:aws:sns:us-east-2:123456789012:budget-killswitch"
 MOTO_IMAGE = os.environ.get("MOTO_IMAGE", "motoserver/moto:5.2.5")
 CONTAINER_HOST = "host.docker.internal"
@@ -387,6 +388,9 @@ class Stack:
         receiving = self.client("ses", direct=True)
         receiving.create_receipt_rule_set(RuleSetName="pidge")
         receiving.set_active_receipt_rule_set(RuleSetName="pidge")
+        self.client("ssm", direct=True).put_parameter(
+            Name=SESSION_KEY_PARAMETER, Type="SecureString", Value="k" * 64
+        )
         self.start_function()
 
     def start_function(self) -> None:
@@ -407,6 +411,7 @@ class Stack:
             MESSAGE_ID_DOMAIN="us-east-2.amazonses.com",
             ISSUER=self.emulator.issuer,
             USER_POOL_ID="us-east-2_e2e",
+            SESSION_KEY_PARAMETER=SESSION_KEY_PARAMETER,
             KILL_SWITCH_TOPIC_ARN=KILL_SWITCH_TOPIC,
             LD_PRELOAD="/e2e/libfaketime.so.1",
             FAKETIME_TIMESTAMP_FILE="/e2e/faketime/now",

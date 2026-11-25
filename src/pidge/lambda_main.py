@@ -13,18 +13,25 @@ import boto3  # type: ignore[import-untyped]
 from . import ulid
 from .auth import TokenValidator
 from .clients import CognitoPoolClients
-from .awsclients import LambdaInvoker, LambdaThrottle, SesReceiptRules, SesSender
+from .awsclients import (
+    LambdaInvoker,
+    LambdaThrottle,
+    SesReceiptRules,
+    SesSender,
+    SsmSecret,
+)
 from .handler import App, dispatch
 from .killswitch import KillSwitch
 from .ports import Context, Settings
 from .s3store import S3Store
 from .search import ShardCache
+from .sessions import SESSION_TOOLS, EitherValidator, SessionValidator
 from .toolkit import Services
 from .tools_read import READ_TOOLS
 from .tools_write import WRITE_TOOLS
 
 FETCH_TIMEOUT = 5
-TOOLS = (*READ_TOOLS, *WRITE_TOOLS)
+TOOLS = (*READ_TOOLS, *WRITE_TOOLS, *SESSION_TOOLS)
 
 
 def fetch_url(url: str) -> bytes:  # pragma: no cover
@@ -111,9 +118,15 @@ def build_app() -> App:  # pragma: no cover
     """
     context = context_from(os.environ)
     shards = ShardCache.create(os.path.join(context.workdir, "shards"))
+    session_key = SsmSecret.create(
+        boto3.client("ssm"), os.environ["SESSION_KEY_PARAMETER"]
+    )
     return App(
-        services=Services(context=context, cache=shards),
-        validator=TokenValidator.create(context.settings.issuer, fetch_url),
+        services=Services(context=context, cache=shards, session_key=session_key),
+        validator=EitherValidator.create(
+            sessions=SessionValidator.create(session_key, context.clock),
+            cognito=TokenValidator.create(context.settings.issuer, fetch_url),
+        ),
         tools=TOOLS,
         killswitch=killswitch_from(os.environ),
         pool=CognitoPoolClients.create(

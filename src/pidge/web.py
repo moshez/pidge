@@ -1,6 +1,7 @@
 """The Lambda Function URL front end: OAuth metadata and the MCP endpoint."""
 
 import base64
+import dataclasses
 import json
 from collections.abc import Mapping, Sequence
 
@@ -148,7 +149,8 @@ def serve_mcp(
         return challenge(event, 401, "invalid_token")
     except ScopeError:
         return challenge(event, 403, "insufficient_scope")
-    response = handle_rpc(services, tools, request_body(event))
+    per_request = dataclasses.replace(services, endpoint=resource)
+    response = handle_rpc(per_request, tools, request_body(event))
     if response is None:
         return {"statusCode": 202, "headers": {}, "body": ""}
     return json_response(200, response, {})

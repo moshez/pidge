@@ -2,11 +2,23 @@
 
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
+from typing import Protocol
 
 from .arguments import ToolError
 from .ports import Context, ShardSource
 
-__all__ = ["Run", "Services", "Tool", "ToolError", "schema"]
+__all__ = ["Run", "Secret", "Services", "Tool", "ToolError", "schema"]
+
+
+class Secret(Protocol):
+    """A secret value, such as the session-token signing key."""
+
+    def value(self) -> bytes:
+        """Return the secret.
+
+        Returns:
+            The secret bytes.
+        """
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -16,10 +28,14 @@ class Services:
     Attributes:
         context: The flow context.
         cache: The local shard cache.
+        session_key: Signs and checks session tokens.
+        endpoint: The MCP endpoint URL of the current request (set per request).
     """
 
     context: Context
     cache: ShardSource
+    session_key: Secret
+    endpoint: str = ""
 
 
 Run = Callable[[Services, Mapping[str, object]], object]

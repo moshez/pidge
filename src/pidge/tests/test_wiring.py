@@ -14,7 +14,7 @@ from hamcrest import (
 )
 
 from .. import jsonvalue
-from ..awsclients import LambdaInvoker, SesSender
+from ..awsclients import LambdaInvoker, SesSender, SsmSecret
 from ..handler import App, dispatch
 from ..outbox import read_state
 from ..ports import Envelope, SendRejected
@@ -24,6 +24,7 @@ from .account import Account
 from .checks import failure, includes
 from .cognito import FakeCognito
 from .flaky import GOOD, FlakyStore, client_error
+from .sessionkey import SESSION_KEY
 from .fakes import (
     PLAIN,
     World,
@@ -94,6 +95,18 @@ class FakeAWS:
             raise error
         return {"MessageId": "ses-9"}
 
+    def get_parameter(self, **kwargs: object) -> Mapping[str, object]:
+        """Pretend to read a parameter.
+
+        Args:
+            **kwargs: The request.
+
+        Returns:
+            A response.
+        """
+        self._calls.append(kwargs)
+        return {"Parameter": {"Value": "sekrit"}}
+
     def invoke(self, **kwargs: object) -> Mapping[str, object]:
         """Pretend to invoke.
 
@@ -115,7 +128,9 @@ class TestDispatch(unittest.TestCase):
         self.world: World = make_world(self)
         self.cognito = FakeCognito()
         cache = new_cache(self.world, "cache")
-        services = Services(context=self.world.context, cache=cache)
+        services = Services(
+            context=self.world.context, cache=cache, session_key=SESSION_KEY
+        )
         self.app = App(
             services=services,
             validator=GOOD,
@@ -207,4 +222,13 @@ class TestAdapters(unittest.TestCase):
         LambdaInvoker.create(client, "pidge").invoke({"action": "index"})
         includes(
             client.recorded()[0], dict(FunctionName="pidge", InvocationType="Event")
+        )
+
+    def test_secret(self) -> None:
+        """The parameter is decrypted once, then cached."""
+        client = FakeAWS.create()
+        secret = SsmSecret.create(client, "/pidge/key")
+        assert_that([secret.value(), secret.value()], equal_to([b"sekrit"] * 2))
+        assert_that(
+            client.recorded(), equal_to([dict(Name="/pidge/key", WithDecryption=True)])
         )

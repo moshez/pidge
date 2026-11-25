@@ -34,6 +34,7 @@ from .harness import (
     FROM_ADDRESS,
     FUNCTION_HOST,
     KILL_SWITCH_TOPIC,
+    RESOURCE,
     SCOPE,
     Stack,
     ToolFailed,
@@ -172,6 +173,7 @@ class TestFunctionUrl(EndToEnd):
                 [
                     "get_attachment",
                     "get_message",
+                    "get_session_token",
                     "list_tags",
                     "search",
                     "send_email",
@@ -188,6 +190,22 @@ class TestFunctionUrl(EndToEnd):
         _, _, reply = self.stack.http("POST", "/mcp", bad, self.stack.emulator.token())
         assert isinstance(reply, dict)
         assert_that(reply["error"]["code"], equal_to(-32601))
+
+    def test_session_token(self) -> None:
+        """A session token works like an OAuth one until it expires."""
+        issued = self.stack.tool("get_session_token")
+        assert isinstance(issued, dict)
+        assert_that(issued["endpoint"], equal_to(RESOURCE))
+        token = issued["token"]
+        listed = self.stack.rpc("tools/call", {"name": "list_tags"}, token=token)
+        assert isinstance(listed, dict)
+        assert_that(listed["isError"], equal_to(False))
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        head, body, signature = token.split(".")
+        tampered = f"{head}.{body}.{'A' if signature[0] != 'A' else 'B'}{signature[1:]}"
+        assert_that(self.stack.http("POST", "/mcp", ping, tampered)[0], equal_to(401))
+        self.stack.advance(301)
+        assert_that(self.stack.http("POST", "/mcp", ping, token)[0], equal_to(401))
 
 
 class TestInbound(EndToEnd):

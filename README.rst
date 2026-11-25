@@ -8,13 +8,64 @@ AI agent.
   function parses it, stores it, and indexes it in per-year SQLite FTS5
   shards kept in the same bucket.
 * The same function serves a stateless MCP endpoint (a Lambda Function URL)
-  with six tools: ``search``, ``get_message``, ``get_attachment``,
-  ``list_tags``, ``send_email`` and ``tag_email``. It is an OAuth 2.1
-  resource server; Cognito (email codes, dynamic client registration) signs
-  you in.
+  with seven tools: ``search``, ``get_message``, ``get_attachment``,
+  ``list_tags``, ``send_email``, ``tag_email`` and ``get_session_token``.
+  It is an OAuth 2.1 resource server; Cognito (email codes, dynamic client
+  registration) signs you in.
 * Sending goes through a transactional outbox in S3 and SES v2.
 * Nobody gets paged: a reconciler runs every 15 minutes, fixes what it can,
   and mails the rest into the inbox tagged ``ops``.
+
+Scripts: session tokens
+-----------------------
+
+``get_session_token`` (no arguments) returns a bearer token that a script can
+use to call the MCP endpoint directly, without going through a connector:
+
+.. code-block:: json
+
+    {"token": "eyJ...", "expires_at": "2026-11-25T02:21:18+00:00",
+     "endpoint": "https://<id>.lambda-url.us-east-2.on.aws/mcp"}
+
+The token is valid for 5 minutes and gets the same tools as the connection
+that asked for it; a longer script just asks for a new one. pidge signs it
+itself (HS256, with a key in SSM Parameter Store); expired or tampered tokens
+get a 401. So an agent can call ``get_session_token`` once, then run a script
+whose tool results stay in the script and only its printed output comes back.
+
+The server is stateless JSON-RPC, so a client is one POST per call:
+
+.. code-block:: python
+
+    import json
+    import sys
+
+    import httpx
+
+    token, endpoint = sys.argv[1], sys.argv[2]
+
+
+    def call(name, **arguments):
+        reply = httpx.post(
+            endpoint,
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+            timeout=60,
+        )
+        reply.raise_for_status()
+        result = reply.json()["result"]
+        if result["isError"]:
+            raise RuntimeError(result["content"][0]["text"])
+        return result["structuredContent"]
+
+
+    for hit in call("search", query="invoice", limit=5)["results"]:
+        print(hit["date"], hit["from"], hit["subject"], sep=" | ")
 
 Layout
 ------
