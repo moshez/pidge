@@ -1,6 +1,7 @@
 """Tests for the indexer, search and tags."""
 
 import dataclasses
+import email.utils
 import unittest
 from collections.abc import Sequence
 
@@ -141,6 +142,42 @@ class TestSearch(unittest.TestCase):
         """Tags must be single words."""
         change = failure(lambda: tag_email(self.store, self.lunch, ["a b"], []))
         assert_that(change, instance_of(TagError))
+
+
+def receive_dated(world: World, name: str, when: int) -> str:
+    """Receive a message with a given Date header.
+
+    Args:
+        world: The environment.
+        name: The SES object name (also the subject).
+        when: The Date header in epoch seconds.
+
+    Returns:
+        The message's ULID.
+    """
+    raw = sample_raw(name, "Hello", {}).replace(
+        b"Thu, 01 Jan 2026 00:00:00 +0000",
+        email.utils.formatdate(when, usegmt=True).encode(),
+    )
+    world.clock.advance(1)
+    return deliver(world, name, raw)
+
+
+class TestDateOrder(unittest.TestCase):
+    """Without terms, index and tail hits share one newest-first order."""
+
+    def test_newest_overall(self) -> None:
+        """Newer unindexed and dirty mail beats older indexed mail."""
+        world = make_world(self)
+        base = 1_767_225_600
+        indexed = [receive_dated(world, f"i{n}", base + n * 60) for n in range(5)]
+        run_tracked(world.context)
+        fresh = [receive_dated(world, f"f{n}", base + 900 + n) for n in range(2)]
+        tag_email(world.store, indexed[-1], ["seen"], [])
+        cache = new_cache(world, "cache")
+        hits = found(world.store, cache, Query(tags=["inbox"], limit=4))
+        expected = [fresh[1], fresh[0], indexed[4], indexed[3]]
+        assert_that(hits, equal_to(expected))
 
 
 class TestIndexer(unittest.TestCase):

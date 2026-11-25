@@ -95,6 +95,24 @@ def newest_first(hits: Iterable[Hit]) -> Sequence[Hit]:
     return sorted(hits, key=lambda hit: (hit.date, hit.ulid), reverse=True)
 
 
+def unique(hits: Iterable[Hit]) -> Sequence[Hit]:
+    """Drop repeated hits, keeping the first of each ID.
+
+    Args:
+        hits: The hits, in order.
+
+    Returns:
+        The hits without duplicates, in the same order.
+    """
+    seen: set[str] = set()
+    kept = []
+    for candidate in hits:
+        if candidate.ulid not in seen:
+            seen.add(candidate.ulid)
+            kept.append(candidate)
+    return kept
+
+
 def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[Hit]:
     """Combine index hits and tail hits.
 
@@ -104,20 +122,16 @@ def merge(ranked: Iterable[Hit], tail: Iterable[Hit], query: Query) -> Sequence[
         query: The query (for ordering and the limit).
 
     Returns:
-        Index hits first (by score, or by date without terms), then tail hits
-        by date, without duplicates.
+        With terms, ranked index hits by score, then tail hits by date.
+        Without terms, all hits in one newest-first order. Either way without
+        duplicates (the tail copy wins) and cut to the limit.
     """
+    tail_hits = list(tail)
     if query.terms:
-        first: Sequence[Hit] = sorted(ranked, key=lambda hit: hit.score or 0.0)
+        first = sorted(ranked, key=lambda hit: hit.score or 0.0)
+        merged = unique([*first, *newest_first(tail_hits)])
     else:
-        first = newest_first(ranked)
-    rest = newest_first(tail)
-    seen: set[str] = set()
-    merged = []
-    for hit in [*first, *rest]:
-        if hit.ulid not in seen:
-            seen.add(hit.ulid)
-            merged.append(hit)
+        merged = unique(newest_first([*tail_hits, *ranked]))
     return merged[: query.limit]
 
 

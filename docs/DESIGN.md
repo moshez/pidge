@@ -224,8 +224,9 @@ Results are ranked with FTS5's built-in `bm25()`.
    - Fetch those messages' `headers.json`, `body.txt` and `meta.json` with a thread pool.
    - Match them in Python using the same query language: terms plus structured filters.
 3. **Merge:**
-   - Ranked index hits first, then tail hits by date, labeled unranked.
-   - Dedupe by ULID, since a message can show up on both sides if indexing runs mid-search.
+   - With query terms: ranked index hits first, then tail hits by date, labeled unranked.
+   - Without terms: index and tail hits in one newest-first order by `(date, ulid)`. Tail hits are usually the newest mail, so listing them after the index would drop them once the limit is reached.
+   - Dedupe by ULID, since a message can show up on both sides if indexing runs mid-search. Then cut to the limit.
 
 **Keep the query language minimal** (terms, `from`, `to`, `after`, `before`, `tags`, `has_attachments`) so the naive tail matcher and FTS5 agree.
 
