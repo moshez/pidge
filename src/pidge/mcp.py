@@ -1,18 +1,9 @@
 """A stateless MCP server over JSON-RPC (streamable HTTP, JSON responses)."""
 
-import dataclasses
 import json
 from collections.abc import Callable, Mapping, Sequence
 
 from . import jsonvalue
-from .mcpsession import (
-    EXPIRED_MESSAGE,
-    HEADER,
-    SESSION_EXPIRED,
-    check,
-    issue,
-    log_expiry,
-)
 from .toolkit import Services, Tool, ToolError
 
 SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -215,91 +206,23 @@ def run_method(
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class Answer:
-    """How to answer one MCP POST.
-
-    Attributes:
-        status: The HTTP status.
-        headers: Extra response headers.
-        payload: The JSON-RPC response, or None for an empty body.
-    """
-
-    status: int
-    headers: Mapping[str, str]
-    payload: Mapping[str, object] | None
-
-
-def start_session(
-    services: Services, tools: Sequence[Tool], message: Mapping[str, object]
-) -> Answer:
-    """Answer ``initialize``, issuing a session ID if it succeeds.
-
-    Args:
-        services: The services.
-        tools: The tools.
-        message: The request.
-
-    Returns:
-        The answer.
-    """
-    response = run_method(services, tools, message)
-    if "result" not in response:
-        return Answer(status=200, headers={}, payload=response)
-    params = jsonvalue.as_dict(message["params"])
-    session_id = issue(services.sessions, params.get("clientInfo"))
-    return Answer(status=200, headers={HEADER: session_id}, payload=response)
-
-
-def in_session(
-    services: Services, message: Mapping[str, object], session_id: str | None
-) -> Answer | None:
-    """Refuse a message unless its session ID was issued by this build.
-
-    Args:
-        services: The services.
-        message: The JSON-RPC message.
-        session_id: The ``Mcp-Session-Id`` header, or None if absent.
-
-    Returns:
-        A 404 answer telling the client to re-initialize, or None to proceed.
-    """
-    expired = check(services.sessions, session_id)
-    if expired is None:
-        return None
-    log_expiry(services.sessions, expired, session_id, message.get("method"))
-    payload = error_response(message.get("id"), SESSION_EXPIRED, EXPIRED_MESSAGE)
-    return Answer(status=404, headers={}, payload=payload)
-
-
 def handle_rpc(
-    services: Services, tools: Sequence[Tool], body: bytes, session_id: str | None
-) -> Answer:
+    services: Services, tools: Sequence[Tool], body: bytes
+) -> Mapping[str, object] | None:
     """Handle one JSON-RPC message.
-
-    ``initialize`` starts a session; anything else needs a session ID issued
-    by this build, or it gets a 404 so that the client re-initializes.
 
     Args:
         services: The services.
         tools: The tools.
         body: The request body.
-        session_id: The ``Mcp-Session-Id`` header, or None if absent.
 
     Returns:
-        The answer: an empty 202 for a notification (or a client response).
+        The response, or None for a notification (or a client response).
     """
     try:
         message = jsonvalue.loads_dict(body)
     except (ValueError, jsonvalue.JSONShapeError):
-        payload = error_response(None, PARSE_ERROR, "expected a JSON object")
-        return Answer(status=200, headers={}, payload=payload)
+        return error_response(None, PARSE_ERROR, "expected a JSON object")
     if "method" not in message or message.get("id") is None:
-        return in_session(services, message, session_id) or Answer(
-            status=202, headers={}, payload=None
-        )
-    if message["method"] == "initialize":
-        return start_session(services, tools, message)
-    return in_session(services, message, session_id) or Answer(
-        status=200, headers={}, payload=run_method(services, tools, message)
-    )
+        return None
+    return run_method(services, tools, message)

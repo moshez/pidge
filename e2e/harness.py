@@ -50,7 +50,6 @@ FUNCTION_HOST = "abc123.lambda-url.us-east-2.on.aws"
 RESOURCE = f"https://{FUNCTION_HOST}/mcp"
 SCOPE = f"{RESOURCE}/full"
 SESSION_KEY_PARAMETER = "/pidge/session-signing-key"
-BUILD = "e2e0build"
 KILL_SWITCH_TOPIC = "arn:aws:sns:us-east-2:123456789012:budget-killswitch"
 MOTO_IMAGE = os.environ.get("MOTO_IMAGE", "motoserver/moto:5.2.5")
 CONTAINER_HOST = "host.docker.internal"
@@ -362,7 +361,6 @@ class Stack:
         self.function: str | None = None
         self.function_port = free_port()
         self.offset = 0
-        self.session_id: str | None = None
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -414,7 +412,6 @@ class Stack:
             ISSUER=self.emulator.issuer,
             USER_POOL_ID="us-east-2_e2e",
             SESSION_KEY_PARAMETER=SESSION_KEY_PARAMETER,
-            PIDGE_BUILD=BUILD,
             KILL_SWITCH_TOPIC_ARN=KILL_SWITCH_TOPIC,
             LD_PRELOAD="/e2e/libfaketime.so.1",
             FAKETIME_TIMESTAMP_FILE="/e2e/faketime/now",
@@ -622,13 +619,10 @@ class Stack:
         path: str,
         body: object = None,
         token: str | None = None,
-        session_id: str | None = None,
     ) -> tuple[int, Mapping[str, str], object]:
         headers = {"content-type": "application/json"}
         if token is not None:
             headers["authorization"] = f"Bearer {token}"
-        if session_id is not None:
-            headers["mcp-session-id"] = session_id
         event = {
             "version": "2.0",
             "rawPath": path,
@@ -655,18 +649,15 @@ class Stack:
     def rpc(
         self, method: str, params: object = None, token: str | None = None
     ) -> object:
-        """Make a JSON-RPC call, initializing an MCP session first if needed."""
-        bearer = self.emulator.token(self.now()) if token is None else token
-        if method != "initialize" and self.session_id is None:
-            self.rpc("initialize", {"protocolVersion": "2025-11-25"}, bearer)
         body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
-        status, headers, reply = self.http(
-            "POST", "/mcp", body, bearer, self.session_id
+        status, _, reply = self.http(
+            "POST",
+            "/mcp",
+            body,
+            self.emulator.token(self.now()) if token is None else token,
         )
         if status != 200 or not isinstance(reply, dict) or "result" not in reply:
             raise AssertionError(f"{method}: {status} {reply}")
-        if method == "initialize":
-            self.session_id = headers["mcp-session-id"]
         return reply["result"]
 
     def tool(self, tool: str, /, **arguments: object) -> object:

@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from . import jsonvalue
 from .auth import AuthError, ScopeError, BearerValidator
 from .mcp import handle_rpc
-from .mcpsession import HEADER
 from .toolkit import Services, Tool
 
 MCP_PATH = "/mcp"
@@ -123,19 +122,6 @@ def bearer_token(event: Mapping[str, object]) -> str:
     return token.strip() if scheme.lower() == "bearer" else ""
 
 
-def session_header(event: Mapping[str, object]) -> str | None:
-    """Read the ``Mcp-Session-Id`` header (Function URLs lowercase names).
-
-    Args:
-        event: The Function URL event.
-
-    Returns:
-        The header, or None if absent.
-    """
-    value = jsonvalue.get_dict(event, "headers").get(HEADER)
-    return None if value is None else str(value)
-
-
 def serve_mcp(
     event: Mapping[str, object],
     services: Services,
@@ -164,10 +150,10 @@ def serve_mcp(
     except ScopeError:
         return challenge(event, 403, "insufficient_scope")
     per_request = dataclasses.replace(services, endpoint=resource)
-    answer = handle_rpc(per_request, tools, request_body(event), session_header(event))
-    if answer.payload is None:
-        return {"statusCode": answer.status, "headers": answer.headers, "body": ""}
-    return json_response(answer.status, answer.payload, answer.headers)
+    response = handle_rpc(per_request, tools, request_body(event))
+    if response is None:
+        return {"statusCode": 202, "headers": {}, "body": ""}
+    return json_response(200, response, {})
 
 
 def route(
@@ -195,6 +181,5 @@ def route(
     if path != MCP_PATH:
         return json_response(404, {"error": "not found"}, {})
     if method != "POST":
-        # Including DELETE of a session: there is no session state to end.
         return json_response(405, {"error": "use POST"}, {"allow": "POST"})
     return serve_mcp(event, services, validator, tools)

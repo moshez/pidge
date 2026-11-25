@@ -21,12 +21,6 @@ variable "image_uri" {
   type        = string
 }
 
-variable "build" {
-  description = "The git SHA being deployed. The Lambda gets it as PIDGE_BUILD and puts it in MCP session IDs, so a deploy expires every session (mcpsession.py)."
-  type        = string
-  default     = "dev"
-}
-
 variable "image_digest" {
   description = "The image digest to deploy (sha256:...). Pinning by digest updates the function on every new image."
   type        = string

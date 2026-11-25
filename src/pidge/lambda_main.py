@@ -22,12 +22,11 @@ from .awsclients import (
 )
 from .handler import App, dispatch
 from .killswitch import KillSwitch
-from .mcpsession import Sessions, random_part
 from .ports import Context, Settings
 from .s3store import S3Store
 from .search import ShardCache
 from .sessions import SESSION_TOOLS, EitherValidator, SessionValidator
-from .toolkit import Secret, Services
+from .toolkit import Services
 from .tools_read import READ_TOOLS
 from .tools_write import WRITE_TOOLS
 
@@ -110,43 +109,6 @@ def context_from(environ: Mapping[str, str]) -> Context:  # pragma: no cover
     )
 
 
-def sessions_from(environ: Mapping[str, str]) -> Sessions:  # pragma: no cover
-    """Wire MCP session IDs to the deployed build.
-
-    Args:
-        environ: The process environment; Terraform sets PIDGE_BUILD to the
-            deployed git SHA.
-
-    Returns:
-        The sessions (build ``dev`` when PIDGE_BUILD is unset).
-    """
-    return Sessions(
-        build=environ.get("PIDGE_BUILD", "dev"),
-        random=random_part,
-        log=functools.partial(print, flush=True),
-    )
-
-
-def services_from(
-    context: Context, session_key: Secret
-) -> Services:  # pragma: no cover
-    """Wire what the MCP tools run against.
-
-    Args:
-        context: The flow context.
-        session_key: Signs session tokens.
-
-    Returns:
-        The services.
-    """
-    return Services(
-        context=context,
-        cache=ShardCache.create(os.path.join(context.workdir, "shards")),
-        session_key=session_key,
-        sessions=sessions_from(os.environ),
-    )
-
-
 @functools.cache
 def build_app() -> App:  # pragma: no cover
     """Build the application once per Lambda execution environment.
@@ -155,11 +117,12 @@ def build_app() -> App:  # pragma: no cover
         The application.
     """
     context = context_from(os.environ)
+    shards = ShardCache.create(os.path.join(context.workdir, "shards"))
     session_key = SsmSecret.create(
         boto3.client("ssm"), os.environ["SESSION_KEY_PARAMETER"]
     )
     return App(
-        services=services_from(context, session_key),
+        services=Services(context=context, cache=shards, session_key=session_key),
         validator=EitherValidator.create(
             sessions=SessionValidator.create(session_key, context.clock),
             cognito=TokenValidator.create(context.settings.issuer, fetch_url),

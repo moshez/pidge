@@ -5,7 +5,6 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
 
 from .arguments import ToolError
-from .mcpsession import Sessions
 from .ports import Context, ShardSource
 
 __all__ = ["Run", "Secret", "Services", "Tool", "ToolError", "schema"]
@@ -30,14 +29,12 @@ class Services:
         context: The flow context.
         cache: The local shard cache.
         session_key: Signs and checks session tokens.
-        sessions: Issues and checks MCP session IDs for the running build.
         endpoint: The MCP endpoint URL of the current request (set per request).
     """
 
     context: Context
     cache: ShardSource
     session_key: Secret
-    sessions: Sessions
     endpoint: str = ""
 
 
