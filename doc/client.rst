@@ -52,7 +52,11 @@ Layers
 ``pidge_client.transport``
    ``Session(endpoint=..., token=...)`` and ``call_tool``. A failed tool
    raises ``ToolError``, a JSON-RPC error ``RpcError``, an HTTP 401
-   ``AuthError``. The transport is pluggable; the default uses
+   ``AuthError``. The first request on a ``Session`` sends ``initialize``
+   and keeps the ``Mcp-Session-Id`` it returns for every later request.
+   pidge expires sessions on each deploy (HTTP 404); the session then
+   re-initializes once and retries, and only a second 404 raises
+   ``SessionExpired``. The transport is pluggable; the default uses
    ``urllib.request``.
 
 ``pidge_client.calls``

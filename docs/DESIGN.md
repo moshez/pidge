@@ -263,6 +263,14 @@ Results are ranked with FTS5's built-in `bm25()`.
 - **Streamable HTTP** in **stateless mode with JSON responses** (`stateless_http=True, json_response=True` in the Python SDK).
 - **Why stateless:** Lambda supports response streaming only on Node.js managed runtimes. Every tool here is plain request/response, so streaming isn't needed.
 - **Hosting:** a Lambda Function URL with auth type `NONE`. The function validates OAuth itself.
+- **Sessions expire on deploy, statelessly.** MCP clients cache `tools/list` and the `initialize` instructions for the life of a session, so a deploy that changes tools or instructions would go unseen. pidge stores no sessions; the session ID itself carries the build:
+  - The deploy workflow passes the commit SHA to Terraform (`TF_VAR_build`), which sets `PIDGE_BUILD` on the Lambda (`dev` when unset; the smoke test and e2e harness set their own).
+  - A successful `initialize` answers with `Mcp-Session-Id: <build>.<random>`, where the random part is 128 bits from `secrets`, URL-safe base64 (visible ASCII only, as the spec requires).
+  - Every other message, request or notification, must carry an ID whose build part is the running build. A different build, a malformed ID or **no header at all** gets HTTP 404 with a JSON-RPC error (code `-32001`, "session expired; re-initialize"). Per the streamable HTTP spec, a client that gets 404 for a request carrying a session ID must start a new session with a fresh `initialize`.
+  - **Deliberate deviation:** the spec says a request missing a required session ID SHOULD get 400. pidge answers 404 instead, because clients that were never issued an ID (claude.ai connections made before this scheme) must be pushed to re-initialize too, and 400 would not do that.
+  - Authentication still comes first: an unauthenticated request gets 401 whatever its session header. `DELETE` (ending a session) gets 405, since there is nothing to end. Capabilities stay `tools.listChanged: false`.
+  - Each `initialize` logs one JSON line (`mcp=initialize`, `build`, `client` = the client's `clientInfo`), and each refusal logs one (`mcp=expired`, `reason` = `absent`/`stale`/`malformed`, `build`, `old_build` for stale IDs, `method`). Together they show whether claude.ai re-initializes after a deploy.
+  - `pidge_client` initializes before its first request, echoes the ID, and on a 404 re-initializes once and retries once.
 
 ### 8.2 Tools
 

@@ -109,10 +109,10 @@ class TestSession(unittest.TestCase):
         assert_that(caught.exception.args, equal_to((502, "bad gateway")))
 
     def test_request_ids_increase(self) -> None:
-        """Each request gets the next ID."""
+        """Each request gets the next ID, after initialize's."""
         session = empty_mailbox(self).session
         rpc(session, "ping", {})
-        assert_that(next(session.ids), equal_to(2))
+        assert_that(next(session.ids), equal_to(3))
 
     def test_list_tools(self) -> None:
         """tools/list returns the tool descriptions."""
@@ -152,7 +152,7 @@ class TestUrllib(unittest.TestCase):
             with self.assertRaises(AuthError):
                 calls.list_tags(dataclasses.replace(session, token="stale"))
             reply = UrllibTransport.create().get(f"{base}/memory:msgs/{ulid}/body.txt")
-        assert_that(reply, equal_to(Reply(status=200, body=b"Body of Over HTTP\n")))
+        assert_that((reply.status, reply.body), equal_to((200, b"Body of Over HTTP\n")))
 
     def test_missing_object(self) -> None:
         """A presigned URL for a missing object is a 404."""
