@@ -13,9 +13,14 @@ from . import jsonvalue
 from .mimeparse import new_message
 from .ports import Context
 from .records import attachment_key, message_key, read_json
+from .store import NotFound
 
 _REPLY_PREFIX = re.compile(r"\A\s*re\s*:", re.IGNORECASE)
 _ORDINAL = re.compile(r"\A\d+-")
+
+
+class MissingAttachment(Exception):
+    """An attachment to copy into a new message does not exist."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -118,8 +123,16 @@ def attach(
         context: The flow context.
         message: The message being built.
         ref: The attachment.
+
+    Raises:
+        MissingAttachment: If the message has no such attachment.
     """
-    data = context.store.get(attachment_key(ref.message, ref.name)).body
+    try:
+        data = context.store.get(attachment_key(ref.message, ref.name)).body
+    except NotFound:
+        raise MissingAttachment(
+            f"no attachment {ref.name!r} on {ref.message}"
+        ) from None
     main, sub = content_type_of(context, ref)
     filename = _ORDINAL.sub("", ref.name)
     message.add_attachment(data, maintype=main, subtype=sub, filename=filename)

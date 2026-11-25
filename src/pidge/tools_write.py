@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from email.utils import formataddr, getaddresses, parseaddr
 
 from . import arguments, jsonvalue
-from .compose import AttachmentRef, Draft
+from .compose import AttachmentRef, Draft, MissingAttachment
 from .outbox import enqueue
 from .ports import Settings
 from .store import NotFound
@@ -65,6 +65,25 @@ def sender_header(settings: Settings, requested: str) -> str:
     return formataddr((name or default_name, address))
 
 
+def queue_draft(services: Services, draft: Draft) -> str:
+    """Queue a draft, reporting a missing attachment as a tool error.
+
+    Args:
+        services: The services.
+        draft: The draft.
+
+    Returns:
+        The outbox ID.
+
+    Raises:
+        ToolError: If an attachment to copy does not exist.
+    """
+    try:
+        return enqueue(services.context, draft)
+    except MissingAttachment as error:
+        raise ToolError(str(error)) from None
+
+
 def run_send_email(services: Services, args: Mapping[str, object]) -> object:
     """Queue a message for sending.
 
@@ -76,7 +95,8 @@ def run_send_email(services: Services, args: Mapping[str, object]) -> object:
         The outbox ID.
 
     Raises:
-        ToolError: If there are no recipients or the sender is invalid.
+        ToolError: If there are no recipients, the sender is invalid or an
+            attachment to copy does not exist.
     """
     reply_to = arguments.text(args, "in_reply_to_id")
     draft = Draft(
@@ -91,7 +111,7 @@ def run_send_email(services: Services, args: Mapping[str, object]) -> object:
     )
     if not draft.to:
         raise ToolError("to must list at least one address")
-    outbox_id = enqueue(services.context, draft)
+    outbox_id = queue_draft(services, draft)
     return dict(outbox_id=outbox_id, status="pending")
 
 
